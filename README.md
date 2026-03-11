@@ -15,10 +15,7 @@ This version is different. GSD is now a standalone CLI built on the [Pi SDK](htt
 
 One command. Walk away. Come back to a built project with clean git history.
 
-```bash
-npm install -g gsd-pi
-gsd
-```
+<pre><code>npm install -g gsd-pi</code></pre>
 
 </div>
 
@@ -118,27 +115,31 @@ The wizard is the on-ramp. Auto mode is the highway.
 
 ## Getting Started
 
-### Install and run
+### Install
 
 ```bash
 npm install -g gsd-pi
-cd your-project
+```
+
+### Use it
+
+Open a terminal in your project and run:
+
+```bash
 gsd
 ```
 
-That's it. GSD walks you through describing what you want to build, creates a roadmap, and starts working. When you're ready to let it run autonomously:
+GSD opens an interactive agent session. From there, you have two ways to work:
 
-```
-/gsd auto
-```
+**`/gsd` — guided mode.** Type `/gsd` and GSD reads your project state and walks you through whatever's next. No project yet? It helps you describe what you want to build. Roadmap exists? It plans the next slice. Mid-task? It resumes. This is the hands-on mode where you work *with* the agent step by step.
 
-Walk away. Come back to a built project with clean git history.
+**`/gsd auto` — autonomous mode.** Type `/gsd auto` and walk away. GSD researches, plans, executes, verifies, commits, and advances through every slice until the milestone is complete. Fresh context window per task. No babysitting.
 
-### The two-terminal workflow
+### Two terminals, one project
 
-GSD is designed for you to keep working while it builds. Open two terminals in the same project:
+The real workflow: run auto mode in one terminal, steer from another.
 
-**Terminal 1 — auto mode (let it run)**
+**Terminal 1 — let it build**
 ```bash
 gsd
 /gsd auto
@@ -152,17 +153,17 @@ gsd
 /gsd queue      # queue the next milestone
 ```
 
-Auto mode reads state from `.gsd/` files on disk. Your discussions and decisions in terminal 2 are picked up automatically at the next phase boundary. You don't need to stop auto mode to influence what it does next.
+Both terminals read and write the same `.gsd/` files on disk. Your decisions in terminal 2 are picked up automatically at the next phase boundary — no need to stop auto mode.
 
 ### First launch
 
-On first run, GSD prompts for optional API keys (Brave Search, Context7, Jina) for web research and documentation tools. All optional — press Enter to skip. Keys are stored in `~/.gsd/agent/auth.json`.
+On first run, GSD prompts for optional API keys (Brave Search, Context7, Jina) for web research and documentation tools. All optional — press Enter to skip any.
 
 ### Commands
 
 | Command | What it does |
 |---------|-------------|
-| `/gsd` | Contextual wizard — reads state, shows what's next |
+| `/gsd` | Guided mode — reads project state, walks you through what's next |
 | `/gsd auto` | Autonomous mode — researches, plans, executes, commits, repeats |
 | `/gsd stop` | Stop auto mode gracefully |
 | `/gsd discuss` | Discuss architecture and decisions (works alongside auto mode) |
