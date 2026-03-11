@@ -36,6 +36,13 @@ export function initResources(agentDir: string): void {
     cpSync(srcAgents, destAgents, { recursive: true, force: true })
   }
 
+  // Sync skills — always overwrite so updates land on next launch
+  const destSkills = join(agentDir, 'skills')
+  const srcSkills = join(resourcesDir, 'skills')
+  if (existsSync(srcSkills)) {
+    cpSync(srcSkills, destSkills, { recursive: true, force: true })
+  }
+
   // Sync AGENTS.md
   const srcAgentsMd = join(resourcesDir, 'AGENTS.md')
   const destAgentsMd = join(agentDir, 'AGENTS.md')
