@@ -2,7 +2,7 @@
   "name": "gsd-pi",
   "version": "0.1.5",
   "description": "GSD — Get Stuff Done coding agent",
-  "license": "BUSL-1.1",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/glittercowboy/gsd-pi.git"

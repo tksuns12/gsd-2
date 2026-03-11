@@ -28,8 +28,9 @@
 import { Type } from "@sinclair/typebox";
 import { StringEnum } from "@mariozechner/pi-ai";
 import { Text } from "@mariozechner/pi-tui";
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { truncateHead, DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES } from "@mariozechner/pi-coding-agent";
+import { showConfirm } from "../shared/confirm-ui.js";
 
 import {
 	isAuthenticated,
@@ -102,6 +103,29 @@ function textResult(text: string, details?: Record<string, unknown>) {
 	};
 }
 
+/**
+ * Confirmation gate for outward-facing GitHub actions.
+ * Shows a themed yes/no confirmation in interactive mode.
+ * In non-interactive mode (no UI), blocks the action.
+ * Returns the rejected textResult if denied, or undefined if confirmed.
+ */
+async function confirmAction(
+	ctx: ExtensionContext,
+	action: string,
+): Promise<ReturnType<typeof textResult> | undefined> {
+	if (!ctx.hasUI) {
+		return textResult(`Blocked: "${action}" requires user confirmation but no UI is available.`);
+	}
+	const confirmed = await showConfirm(ctx, {
+		title: "GitHub",
+		message: action,
+	});
+	if (!confirmed) {
+		return textResult(`Cancelled: user declined "${action}".`);
+	}
+	return undefined;
+}
+
 // ─── Extension ────────────────────────────────────────────────────────────────
 
 export default function (pi: ExtensionAPI) {
@@ -116,6 +140,7 @@ export default function (pi: ExtensionAPI) {
 			"Use github_issues to interact with GitHub issues instead of running `gh` CLI commands directly.",
 			"When listing issues, default to state='open' and include relevant filters like labels or assignee.",
 			"When searching, use GitHub search syntax in the query (e.g., 'is:open label:bug').",
+			"Mutating actions (create, update, close, reopen) require user confirmation before executing.",
 		],
 		parameters: Type.Object({
 			action: StringEnum(["list", "view", "create", "update", "close", "reopen", "search"] as const),
@@ -161,6 +186,8 @@ export default function (pi: ExtensionAPI) {
 				}
 				case "create": {
 					if (!params.title) return textResult("Error: 'title' is required for create action.");
+					const createGate = await confirmAction(ctx, `Create issue "${params.title}"?`);
+					if (createGate) return createGate;
 					const newIssue = await createIssue(repo, {
 						title: params.title,
 						body: params.body,
@@ -174,6 +201,8 @@ export default function (pi: ExtensionAPI) {
 				}
 				case "update": {
 					if (!params.number) return textResult("Error: 'number' is required for update action.");
+					const updateGate = await confirmAction(ctx, `Update issue #${params.number}?`);
+					if (updateGate) return updateGate;
 					const updated = await updateIssue(repo, params.number, {
 						title: params.title,
 						body: params.body,
@@ -187,11 +216,15 @@ export default function (pi: ExtensionAPI) {
 				}
 				case "close": {
 					if (!params.number) return textResult("Error: 'number' is required for close action.");
+					const closeGate = await confirmAction(ctx, `Close issue #${params.number}?`);
+					if (closeGate) return closeGate;
 					const closed = await updateIssue(repo, params.number, { state: "closed" });
 					return textResult(`Closed issue #${closed.number}: ${closed.title}`, { issue: { number: closed.number } });
 				}
 				case "reopen": {
 					if (!params.number) return textResult("Error: 'number' is required for reopen action.");
+					const reopenGate = await confirmAction(ctx, `Reopen issue #${params.number}?`);
+					if (reopenGate) return reopenGate;
 					const reopened = await updateIssue(repo, params.number, { state: "open" });
 					return textResult(`Reopened issue #${reopened.number}: ${reopened.title}`, { issue: { number: reopened.number } });
 				}
@@ -242,6 +275,7 @@ export default function (pi: ExtensionAPI) {
 			"Use action='diff' to see the actual code changes in a PR.",
 			"Use action='files' for a summary of changed files without the full diff.",
 			"Use action='checks' to see CI/CD status for a PR.",
+			"Mutating actions (create, update) require user confirmation before executing.",
 		],
 		parameters: Type.Object({
 			action: StringEnum(["list", "view", "create", "update", "diff", "files", "checks"] as const),
@@ -285,6 +319,8 @@ export default function (pi: ExtensionAPI) {
 					const head = params.head ?? getCurrentBranch(ctx.cwd);
 					if (!head) return textResult("Error: Could not determine current branch. Provide 'head' parameter.");
 					const base = params.base ?? getDefaultBranch(ctx.cwd);
+					const createPRGate = await confirmAction(ctx, `Create PR "${params.title}" (${head} → ${base})?`);
+					if (createPRGate) return createPRGate;
 					const newPR = await createPullRequest(repo, {
 						title: params.title,
 						body: params.body,
@@ -299,6 +335,8 @@ export default function (pi: ExtensionAPI) {
 				}
 				case "update": {
 					if (!params.number) return textResult("Error: 'number' is required for update action.");
+					const updatePRGate = await confirmAction(ctx, `Update PR #${params.number}?`);
+					if (updatePRGate) return updatePRGate;
 					const updated = await updatePullRequest(repo, params.number, {
 						title: params.title,
 						body: params.body,
@@ -389,6 +427,8 @@ export default function (pi: ExtensionAPI) {
 				}
 				case "add": {
 					if (!params.body) return textResult("Error: 'body' is required for add action.");
+					const addGate = await confirmAction(ctx, `Add comment on #${params.number}?`);
+					if (addGate) return addGate;
 					const comment = await addComment(repo, params.number, params.body);
 					return textResult(
 						`Added comment on #${params.number}: ${comment.html_url}`,
@@ -451,6 +491,8 @@ export default function (pi: ExtensionAPI) {
 				}
 				case "submit": {
 					if (!params.event) return textResult("Error: 'event' is required for submit action (APPROVE, REQUEST_CHANGES, or COMMENT).");
+					const submitGate = await confirmAction(ctx, `Submit ${params.event} review on PR #${params.number}?`);
+					if (submitGate) return submitGate;
 					const review = await createReview(repo, params.number, {
 						body: params.body,
 						event: params.event,
@@ -463,6 +505,8 @@ export default function (pi: ExtensionAPI) {
 				case "request_reviewers": {
 					if (!params.reviewers) return textResult("Error: 'reviewers' is required for request_reviewers action.");
 					const reviewerList = params.reviewers.split(",").map((r) => r.trim());
+					const reviewersGate = await confirmAction(ctx, `Request reviewers on PR #${params.number}: ${reviewerList.join(", ")}?`);
+					if (reviewersGate) return reviewersGate;
 					await requestReviewers(repo, params.number, reviewerList);
 					return textResult(
 						`Requested reviewers on PR #${params.number}: ${reviewerList.join(", ")}`,
@@ -519,6 +563,8 @@ export default function (pi: ExtensionAPI) {
 				}
 				case "create_label": {
 					if (!params.name) return textResult("Error: 'name' is required for create_label.");
+					const labelGate = await confirmAction(ctx, `Create label "${params.name}"?`);
+					if (labelGate) return labelGate;
 					const label = await createLabel(repo, {
 						name: params.name,
 						color: params.color ?? "ededed",
@@ -532,6 +578,8 @@ export default function (pi: ExtensionAPI) {
 				}
 				case "create_milestone": {
 					if (!params.name) return textResult("Error: 'name' is required for create_milestone.");
+					const milestoneGate = await confirmAction(ctx, `Create milestone "${params.name}"?`);
+					if (milestoneGate) return milestoneGate;
 					const ms = await createMilestone(repo, {
 						title: params.name,
 						description: params.description,
