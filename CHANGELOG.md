@@ -6,6 +6,24 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [2.5.0] - 2026-03-12
+
+### Added
+- Native Anthropic web search — Claude models get server-side web search automatically, no Brave API key required
+- GitService fully wired into codebase — programmatic git operations replace shell-based git commands in prompts
+- Merge guards prevent slice completion when uncommitted changes or conflicts exist
+- Snapshot support for saving and restoring `.gsd/` state
+- Auto-push after slice squash-merge to main
+- Rich commit messages with structured metadata
+
+### Fixed
+- State machine deadlock when units fail to produce expected artifacts — retry and cross-validation now gate completion
+- Duplicate Brave search tools when toggling providers repeatedly
+- Windows test glob patterns (single quotes → unquoted for shell expansion)
+- Conversation replay error caused by thinking blocks in stored history
+- Brave search tools removed from API payload when no `BRAVE_API_KEY` is set
+- Restore notifications suppressed on session resume to reduce UX noise
+
 ## [2.4.0] - 2026-03-12
 
 ### Added
@@ -212,7 +230,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 - License updated to MIT
 
-[Unreleased]: https://github.com/gsd-build/gsd-2/compare/v2.4.0...HEAD
+[Unreleased]: https://github.com/gsd-build/gsd-2/compare/v2.5.0...HEAD
+[2.5.0]: https://github.com/gsd-build/gsd-2/compare/v2.4.0...v2.5.0
 [2.4.0]: https://github.com/gsd-build/gsd-2/compare/v2.3.11...v2.4.0
 [2.3.11]: https://github.com/gsd-build/gsd-2/compare/v2.3.10...v2.3.11
 [2.3.10]: https://github.com/gsd-build/gsd-2/compare/v2.3.9...v2.3.10
