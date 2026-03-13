@@ -6,6 +6,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [2.7.0] - 2026-03-12
+
+### Changed
+- Vendor Pi SDK source (tui, ai, agent-core, coding-agent) into workspace monorepo under `packages/`, replacing the compiled npm dependency and patch-package workflow. Pi internals are now directly modifiable as TypeScript source.
+- Existing patches (setModel persist option, Windows VT input caching) applied as source edits.
+- Build pipeline runs workspace packages in dependency order before GSD compilation.
+- Removed `patch-package` from devDependencies and postinstall.
+
 ## [2.6.0] - 2026-03-12
 
 ### Added
@@ -255,7 +263,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 - License updated to MIT
 
-[Unreleased]: https://github.com/gsd-build/gsd-2/compare/v2.6.0...HEAD
+[Unreleased]: https://github.com/gsd-build/gsd-2/compare/v2.7.0...HEAD
+[2.7.0]: https://github.com/gsd-build/gsd-2/compare/v2.6.0...v2.7.0
 [2.6.0]: https://github.com/gsd-build/gsd-2/compare/v2.5.1...v2.6.0
 [2.5.1]: https://github.com/gsd-build/gsd-2/compare/v2.5.0...v2.5.1
 [2.5.0]: https://github.com/gsd-build/gsd-2/compare/v2.4.0...v2.5.0
