@@ -2365,7 +2365,28 @@ export class AgentSession {
 			return false;
 		}
 
-		const delayMs = settings.baseDelayMs * 2 ** (this._retryAttempt - 1);
+		// Use server-requested delay when available (rate limit headers), capped by maxDelayMs.
+		// Fall back to exponential backoff when no server hint is present.
+		const exponentialDelayMs = settings.baseDelayMs * 2 ** (this._retryAttempt - 1);
+		let delayMs: number;
+		if (message.retryAfterMs !== undefined) {
+			const cap = settings.maxDelayMs > 0 ? settings.maxDelayMs : Infinity;
+			if (message.retryAfterMs > cap) {
+				// Server wants us to wait longer than our max — give up immediately
+				this._emit({
+					type: "auto_retry_end",
+					success: false,
+					attempt: this._retryAttempt - 1,
+					finalError: `Rate limit reset in ${Math.ceil(message.retryAfterMs / 1000)}s (max: ${Math.ceil(cap / 1000)}s). ${message.errorMessage || ""}`.trim(),
+				});
+				this._retryAttempt = 0;
+				this._resolveRetry();
+				return false;
+			}
+			delayMs = message.retryAfterMs;
+		} else {
+			delayMs = exponentialDelayMs;
+		}
 
 		this._emit({
 			type: "auto_retry_start",
