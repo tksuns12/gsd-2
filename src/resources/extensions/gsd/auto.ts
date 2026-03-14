@@ -56,7 +56,7 @@ import {
   getProjectTotals, formatCost, formatTokenCount,
 } from "./metrics.js";
 import { dirname, join } from "node:path";
-import { readdirSync, readFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, existsSync, mkdirSync, writeFileSync, unlinkSync } from "node:fs";
 import { execSync, execFileSync } from "node:child_process";
 import {
   autoCommitCurrentBranch,
@@ -1071,7 +1071,18 @@ async function dispatchNextUnit(
         mid = state.activeMilestone?.id;
         midTitle = state.activeMilestone?.title;
       } else {
-        // fix-merge failed — still has unresolved conflicts, reset and stop
+        // fix-merge failed — still has unresolved conflicts, abort merge/squash, reset and stop
+        if (hasMergeHead) {
+          // Properly abort an in-progress merge so MERGE_HEAD and related metadata are cleared
+          runGit(basePath, ["merge", "--abort"], { allowFailure: true });
+        } else if (hasSquashMsg) {
+          // Squash-in-progress without MERGE_HEAD: remove stale squash metadata
+          try {
+            unlinkSync(squashMsgPath);
+          } catch {
+            // Best-effort cleanup; ignore failures
+          }
+        }
         runGit(basePath, ["reset", "--hard", "HEAD"], { allowFailure: true });
         ctx.ui.notify(
           "Fix-merge session failed to resolve all conflicts. Working tree reset. Fix conflicts manually and restart.",
