@@ -135,6 +135,8 @@ let gitService: GitServiceImpl | null = null;
 /** Track total dispatches per unit to detect stuck loops (catches A→B→A→B patterns) */
 const unitDispatchCount = new Map<string, number>();
 const MAX_UNIT_DISPATCHES = 3;
+/** Retry index at which a stub summary placeholder is written when the summary is still absent. */
+const STUB_RECOVERY_THRESHOLD = 2;
 
 /** Tracks recovery attempt count per unit for backoff and diagnostics. */
 const unitRecoveryCount = new Map<string, number>();
@@ -1498,24 +1500,54 @@ async function dispatchNextUnit(
     }
     saveActivityLog(ctx, basePath, unitType, unitId);
 
+    // Final reconciliation pass for execute-task: write any missing durable
+    // artifacts (summary placeholder + [x] checkbox) so the pipeline can
+    // advance instead of stopping. This is the last resort before halting.
+    if (unitType === "execute-task") {
+      const [mid, sid, tid] = unitId.split("/");
+      if (mid && sid && tid) {
+        const status = await inspectExecuteTaskDurability(basePath, unitId);
+        if (status) {
+          const reconciled = skipExecuteTask(basePath, mid, sid, tid, status, "loop-recovery", prevCount);
+          // reconciled: skipExecuteTask attempted to write missing artifacts.
+          // verifyExpectedArtifact: confirms physical artifacts (summary + [x]) now exist on disk.
+          // Both must pass before we clear the dispatch counter and advance.
+          if (reconciled && verifyExpectedArtifact(unitType, unitId, basePath)) {
+            ctx.ui.notify(
+              `Loop recovery: ${unitId} reconciled after ${prevCount + 1} dispatches — blocker artifacts written, pipeline advancing.\n   Review ${status.summaryPath} and replace the placeholder with real work.`,
+              "warning",
+            );
+            unitDispatchCount.delete(dispatchKey);
+            await new Promise(r => setImmediate(r));
+            await dispatchNextUnit(ctx, pi);
+            return;
+          }
+        }
+      }
+    }
+
     const expected = diagnoseExpectedArtifact(unitType, unitId, basePath);
+    const remediation = buildLoopRemediationSteps(unitType, unitId, basePath);
     await stopAuto(ctx, pi);
     ctx.ui.notify(
-      `Loop detected: ${unitType} ${unitId} dispatched ${prevCount + 1} times total. Expected artifact not found.${expected ? `\n   Expected: ${expected}` : ""}\n   Check branch state and .gsd/ artifacts.`,
+      `Loop detected: ${unitType} ${unitId} dispatched ${prevCount + 1} times total. Expected artifact not found.${expected ? `\n   Expected: ${expected}` : ""}${remediation ? `\n\n   Remediation steps:\n${remediation}` : "\n   Check branch state and .gsd/ artifacts."}`,
       "error",
     );
     return;
   }
   unitDispatchCount.set(dispatchKey, prevCount + 1);
   if (prevCount > 0) {
-    // Self-repair: if summary exists but checkbox not marked, fix it and re-derive
+    // Adaptive self-repair: each retry attempts a different remediation step.
     if (unitType === "execute-task") {
       const status = await inspectExecuteTaskDurability(basePath, unitId);
-      if (status?.summaryExists && !status.taskChecked) {
-        const [mid, sid, tid] = unitId.split("/");
-        if (mid && sid && tid) {
+      const [mid, sid, tid] = unitId.split("/");
+      if (status && mid && sid && tid) {
+        if (status.summaryExists && !status.taskChecked) {
+          // Retry 1+: summary exists but checkbox not marked — mark [x] and advance.
           const repaired = skipExecuteTask(basePath, mid, sid, tid, status, "self-repair", 0);
-          if (repaired) {
+          // repaired: skipExecuteTask updated metadata (returned early-true even if regex missed).
+          // verifyExpectedArtifact: confirms the physical artifact (summary + [x]) now exists.
+          if (repaired && verifyExpectedArtifact(unitType, unitId, basePath)) {
             ctx.ui.notify(
               `Self-repaired ${unitId}: summary existed but checkbox was unmarked. Marked [x] and advancing.`,
               "warning",
@@ -1524,6 +1556,32 @@ async function dispatchNextUnit(
             await new Promise(r => setImmediate(r));
             await dispatchNextUnit(ctx, pi);
             return;
+          }
+        } else if (prevCount >= STUB_RECOVERY_THRESHOLD && !status.summaryExists) {
+          // Retry STUB_RECOVERY_THRESHOLD+: summary still missing after multiple attempts.
+          // Write a minimal stub summary so the next agent session has a recovery artifact
+          // to overwrite, rather than starting from scratch again.
+          const tasksDir = resolveTasksDir(basePath, mid, sid);
+          const sDir = resolveSlicePath(basePath, mid, sid);
+          const targetDir = tasksDir ?? (sDir ? join(sDir, "tasks") : null);
+          if (targetDir) {
+            if (!existsSync(targetDir)) mkdirSync(targetDir, { recursive: true });
+            const summaryPath = join(targetDir, buildTaskFileName(tid, "SUMMARY"));
+            if (!existsSync(summaryPath)) {
+              const stubContent = [
+                `# PARTIAL RECOVERY — attempt ${prevCount + 1} of ${MAX_UNIT_DISPATCHES}`,
+                ``,
+                `Task \`${tid}\` in slice \`${sid}\` (milestone \`${mid}\`) has not yet produced a real summary.`,
+                `This placeholder was written by auto-mode after ${prevCount} dispatch attempts.`,
+                ``,
+                `The next agent session will retry this task. Replace this file with real work when done.`,
+              ].join("\n");
+              writeFileSync(summaryPath, stubContent, "utf-8");
+              ctx.ui.notify(
+                `Stub recovery (attempt ${prevCount + 1}/${MAX_UNIT_DISPATCHES}): ${unitId} stub summary placeholder written. Retrying with recovery context.`,
+                "warning",
+              );
+            }
           }
         }
       }
@@ -3177,4 +3235,52 @@ function diagnoseExpectedArtifact(unitType: string, unitId: string, base: string
     default:
       return null;
   }
+}
+
+/**
+ * Build concrete, manual remediation steps for a loop-detected unit failure.
+ * These are shown when automatic reconciliation is not possible.
+ */
+export function buildLoopRemediationSteps(unitType: string, unitId: string, base: string): string | null {
+  const parts = unitId.split("/");
+  const mid = parts[0];
+  const sid = parts[1];
+  const tid = parts[2];
+  switch (unitType) {
+    case "execute-task": {
+      if (!mid || !sid || !tid) break;
+      const planRel = relSliceFile(base, mid, sid, "PLAN");
+      const summaryRel = relTaskFile(base, mid, sid, tid, "SUMMARY");
+      return [
+        `   1. Write ${summaryRel} (even a partial summary is sufficient to unblock the pipeline)`,
+        `   2. Mark ${tid} [x] in ${planRel}: change "- [ ] **${tid}:" → "- [x] **${tid}:"`,
+        `   3. Run \`gsd doctor\` to reconcile .gsd/ state`,
+        `   4. Resume auto-mode — it will pick up from the next task`,
+      ].join("\n");
+    }
+    case "plan-slice":
+    case "research-slice": {
+      if (!mid || !sid) break;
+      const artifactRel = unitType === "plan-slice"
+        ? relSliceFile(base, mid, sid, "PLAN")
+        : relSliceFile(base, mid, sid, "RESEARCH");
+      return [
+        `   1. Write ${artifactRel} manually (or with the LLM in interactive mode)`,
+        `   2. Run \`gsd doctor\` to reconcile .gsd/ state`,
+        `   3. Resume auto-mode`,
+      ].join("\n");
+    }
+    case "complete-slice": {
+      if (!mid || !sid) break;
+      return [
+        `   1. Write the slice summary and UAT file for ${sid} in ${relSlicePath(base, mid, sid)}`,
+        `   2. Mark ${sid} [x] in ${relMilestoneFile(base, mid, "ROADMAP")}`,
+        `   3. Run \`gsd doctor\` to reconcile .gsd/ state`,
+        `   4. Resume auto-mode`,
+      ].join("\n");
+    }
+    default:
+      break;
+  }
+  return null;
 }
