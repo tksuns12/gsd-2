@@ -51,7 +51,7 @@ describe("continue-here", () => {
       const threshold = budget.continueThresholdPercent;
 
       // Simulate the guard: usage is undefined → skip
-      const usage: { percent: number | null } | undefined = undefined;
+      const usage = undefined as { percent: number | null } | undefined;
       const shouldFire = usage != null && usage.percent != null && usage.percent >= threshold;
       assert.equal(shouldFire, false, "undefined usage must not fire");
     });

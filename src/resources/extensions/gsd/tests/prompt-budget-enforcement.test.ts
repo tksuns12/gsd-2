@@ -17,7 +17,7 @@ import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 
-import { inlineDependencySummaries } from "../auto.js";
+import { inlineDependencySummaries } from "../auto-prompts.js";
 import { computeBudgets, truncateAtSectionBoundary } from "../context-budget.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
