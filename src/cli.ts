@@ -19,7 +19,7 @@ import { getPiDefaultModelAndProvider, migratePiCredentials } from './pi-migrati
 import { shouldRunOnboarding, runOnboarding } from './onboarding.js'
 import chalk from 'chalk'
 import { checkForUpdates } from './update-check.js'
-import { printHelp } from './help-text.js'
+import { printHelp, printSubcommandHelp } from './help-text.js'
 
 // ---------------------------------------------------------------------------
 // Minimal CLI arg parser — detects print/subagent mode flags
@@ -91,6 +91,14 @@ function parseCliArgs(argv: string[]): CliFlags {
 
 const cliFlags = parseCliArgs(process.argv)
 const isPrintMode = cliFlags.print || cliFlags.mode !== undefined
+
+// `gsd <subcommand> --help` — show subcommand-specific help
+const subcommand = cliFlags.messages[0]
+if (subcommand && process.argv.includes('--help')) {
+  if (printSubcommandHelp(subcommand, process.env.GSD_VERSION || '0.0.0')) {
+    process.exit(0)
+  }
+}
 
 // `gsd config` — replay the setup wizard and exit
 if (cliFlags.messages[0] === 'config') {
