@@ -21,6 +21,7 @@ import type {
 import { checkExistingEnvKeys } from '../get-secrets-from-user.js';
 import { parseRoadmapSlices } from './roadmap-slices.js';
 import { nativeParseRoadmap, nativeExtractSection, nativeParsePlanFile, nativeParseSummaryFile, NATIVE_UNAVAILABLE } from './native-parser-bridge.js';
+import { debugTime, debugCount } from './debug-logger.js';
 
 // ─── Parse Cache ──────────────────────────────────────────────────────────
 
@@ -224,9 +225,14 @@ export function parseRoadmap(content: string): Roadmap {
 }
 
 function _parseRoadmapImpl(content: string): Roadmap {
+  const stopTimer = debugTime("parse-roadmap");
   // Try native parser first for better performance
   const nativeResult = nativeParseRoadmap(content);
-  if (nativeResult) return nativeResult;
+  if (nativeResult) {
+    stopTimer({ native: true, slices: nativeResult.slices.length, boundaryEntries: nativeResult.boundaryMap.length });
+    debugCount("parseRoadmapCalls");
+    return nativeResult;
+  }
 
   const lines = content.split('\n');
 
@@ -265,21 +271,40 @@ function _parseRoadmapImpl(content: string): Roadmap {
       let produces = '';
       let consumes = '';
 
-      const prodMatch = sectionContent.match(/^Produces:\s*\n([\s\S]*?)(?=^Consumes|$)/m);
-      if (prodMatch) produces = prodMatch[1].trim();
+      // Use indexOf-based parsing instead of [\s\S]*? regex to avoid
+      // catastrophic backtracking on content with code fences (#468).
+      const prodIdx = sectionContent.search(/^Produces:\s*$/m);
+      if (prodIdx !== -1) {
+        const afterProd = sectionContent.indexOf('\n', prodIdx);
+        if (afterProd !== -1) {
+          const consIdx = sectionContent.search(/^Consumes/m);
+          const endIdx = consIdx !== -1 && consIdx > afterProd ? consIdx : sectionContent.length;
+          produces = sectionContent.slice(afterProd + 1, endIdx).trim();
+        }
+      }
 
-      const consMatch = sectionContent.match(/^Consumes[^:]*:\s*\n?([\s\S]*?)$/m);
-      if (consMatch) consumes = consMatch[1].trim();
+      const consLineMatch = sectionContent.match(/^Consumes[^:]*:\s*(.+)$/m);
+      if (consLineMatch) {
+        consumes = consLineMatch[1].trim();
+      }
       if (!consumes) {
-        const singleCons = sectionContent.match(/^Consumes[^:]*:\s*(.+)$/m);
-        if (singleCons) consumes = singleCons[1].trim();
+        const consIdx = sectionContent.search(/^Consumes[^:]*:\s*$/m);
+        if (consIdx !== -1) {
+          const afterCons = sectionContent.indexOf('\n', consIdx);
+          if (afterCons !== -1) {
+            consumes = sectionContent.slice(afterCons + 1).trim();
+          }
+        }
       }
 
       boundaryMap.push({ fromSlice, toSlice, produces, consumes });
     }
   }
 
-  return { title, vision, successCriteria, slices, boundaryMap };
+  const result = { title, vision, successCriteria, slices, boundaryMap };
+  stopTimer({ native: false, slices: slices.length, boundaryEntries: boundaryMap.length });
+  debugCount("parseRoadmapCalls");
+  return result;
 }
 
 // ─── Secrets Manifest Parser ───────────────────────────────────────────────
@@ -358,9 +383,11 @@ export function parsePlan(content: string): SlicePlan {
 }
 
 function _parsePlanImpl(content: string): SlicePlan {
+  const stopTimer = debugTime("parse-plan");
   // Try native parser first for better performance
   const nativeResult = nativeParsePlanFile(content);
   if (nativeResult) {
+    stopTimer({ native: true });
     return {
       id: nativeResult.id,
       title: nativeResult.title,
@@ -452,7 +479,10 @@ function _parsePlanImpl(content: string): SlicePlan {
   const filesSection = extractSection(content, 'Files Likely Touched');
   const filesLikelyTouched = filesSection ? parseBullets(filesSection) : [];
 
-  return { id, title, goal, demo, mustHaves, tasks, filesLikelyTouched };
+  const result = { id, title, goal, demo, mustHaves, tasks, filesLikelyTouched };
+  stopTimer({ tasks: tasks.length });
+  debugCount("parsePlanCalls");
+  return result;
 }
 
 // ─── Summary Parser ────────────────────────────────────────────────────────
@@ -849,7 +879,7 @@ export function parseContextDependsOn(content: string | null): string[] {
   const fm = parseFrontmatterMap(fmLines);
   const raw = fm['depends_on'];
   if (!Array.isArray(raw) || raw.length === 0) return [];
-  return (raw as string[]).map(s => String(s).toUpperCase().trim()).filter(Boolean);
+  return (raw as string[]).map(s => String(s).trim()).filter(Boolean);
 }
 
 /**
@@ -948,6 +978,128 @@ export async function appendOverride(basePath: string, change: string, appliedAt
       "",
     ].join("\n");
     await saveFile(overridesPath, header + entry);
+  }
+}
+
+export async function appendKnowledge(
+  basePath: string,
+  type: "rule" | "pattern" | "lesson",
+  entry: string,
+  scope: string,
+): Promise<void> {
+  const knowledgePath = resolveGsdRootFile(basePath, "KNOWLEDGE");
+  const existing = await loadFile(knowledgePath);
+
+  if (existing) {
+    // Find the next ID for this type
+    const prefix = type === "rule" ? "K" : type === "pattern" ? "P" : "L";
+    const idPattern = new RegExp(`^\\| ${prefix}(\\d+)`, "gm");
+    let maxId = 0;
+    let match;
+    while ((match = idPattern.exec(existing)) !== null) {
+      const num = parseInt(match[1], 10);
+      if (num > maxId) maxId = num;
+    }
+    const nextId = `${prefix}${String(maxId + 1).padStart(3, "0")}`;
+
+    // Build the table row
+    let row: string;
+    if (type === "rule") {
+      row = `| ${nextId} | ${scope} | ${entry} | — | manual |`;
+    } else if (type === "pattern") {
+      row = `| ${nextId} | ${entry} | — | ${scope} |`;
+    } else {
+      row = `| ${nextId} | ${entry} | — | — | ${scope} |`;
+    }
+
+    // Find the right section and append after the table header
+    const sectionHeading = type === "rule" ? "## Rules" : type === "pattern" ? "## Patterns" : "## Lessons Learned";
+    const sectionIdx = existing.indexOf(sectionHeading);
+    if (sectionIdx !== -1) {
+      // Find the end of the table header row (the |---|...| line)
+      const afterHeading = existing.indexOf("\n", sectionIdx);
+      // Find the next section or end
+      const nextSection = existing.indexOf("\n## ", afterHeading + 1);
+      const insertPoint = nextSection !== -1 ? nextSection : existing.length;
+
+      // Insert row before the next section (or at end)
+      const before = existing.slice(0, insertPoint).trimEnd();
+      const after = existing.slice(insertPoint);
+      await saveFile(knowledgePath, before + "\n" + row + "\n" + after);
+    } else {
+      // Section not found — append at end
+      await saveFile(knowledgePath, existing.trimEnd() + "\n\n" + row + "\n");
+    }
+  } else {
+    // Create file from scratch with template header
+    const header = [
+      "# Project Knowledge",
+      "",
+      "Append-only register of project-specific rules, patterns, and lessons learned.",
+      "Agents read this before every unit. Add entries when you discover something worth remembering.",
+      "",
+    ].join("\n");
+
+    let content: string;
+    if (type === "rule") {
+      content = header + [
+        "## Rules",
+        "",
+        "| # | Scope | Rule | Why | Added |",
+        "|---|-------|------|-----|-------|",
+        `| K001 | ${scope} | ${entry} | — | manual |`,
+        "",
+        "## Patterns",
+        "",
+        "| # | Pattern | Where | Notes |",
+        "|---|---------|-------|-------|",
+        "",
+        "## Lessons Learned",
+        "",
+        "| # | What Happened | Root Cause | Fix | Scope |",
+        "|---|--------------|------------|-----|-------|",
+        "",
+      ].join("\n");
+    } else if (type === "pattern") {
+      content = header + [
+        "## Rules",
+        "",
+        "| # | Scope | Rule | Why | Added |",
+        "|---|-------|------|-----|-------|",
+        "",
+        "## Patterns",
+        "",
+        "| # | Pattern | Where | Notes |",
+        "|---|---------|-------|-------|",
+        `| P001 | ${entry} | — | ${scope} |`,
+        "",
+        "## Lessons Learned",
+        "",
+        "| # | What Happened | Root Cause | Fix | Scope |",
+        "|---|--------------|------------|-----|-------|",
+        "",
+      ].join("\n");
+    } else {
+      content = header + [
+        "## Rules",
+        "",
+        "| # | Scope | Rule | Why | Added |",
+        "|---|-------|------|-----|-------|",
+        "",
+        "## Patterns",
+        "",
+        "| # | Pattern | Where | Notes |",
+        "|---|---------|-------|-------|",
+        "",
+        "## Lessons Learned",
+        "",
+        "| # | What Happened | Root Cause | Fix | Scope |",
+        "|---|--------------|------------|-----|-------|",
+        `| L001 | ${entry} | — | — | ${scope} |`,
+        "",
+      ].join("\n");
+    }
+    await saveFile(knowledgePath, content);
   }
 }
 
