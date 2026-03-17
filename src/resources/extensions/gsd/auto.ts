@@ -567,6 +567,7 @@ function startDispatchGapWatchdog(ctx: ExtensionContext, pi: ExtensionAPI): void
 
 export async function stopAuto(ctx?: ExtensionContext, pi?: ExtensionAPI, reason?: string): Promise<void> {
   if (!active && !paused) return;
+  const reasonSuffix = reason ? ` — ${reason}` : "";
   clearUnitTimeout();
   if (lockBase()) clearLock(lockBase());
   clearSkillSnapshot();
