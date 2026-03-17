@@ -347,11 +347,7 @@ function startDispatchGapWatchdog(ctx: ExtensionContext, pi: ExtensionAPI): void
       await dispatchNextUnit(ctx, pi);
     } catch (retryErr) {
       const message = retryErr instanceof Error ? retryErr.message : String(retryErr);
-      ctx.ui.notify(
-        `Dispatch gap recovery failed: ${message}. Stopping auto-mode.`,
-        "error",
-      );
-      await stopAuto(ctx, pi);
+      await stopAuto(ctx, pi, `Dispatch gap recovery failed: ${message}`);
       return;
     }
 
@@ -359,16 +355,12 @@ function startDispatchGapWatchdog(ctx: ExtensionContext, pi: ExtensionAPI): void
     // (no sendMessage called → no timeout set), auto-mode is permanently
     // stalled. Stop cleanly instead of leaving it active but idle (#537).
     if (active && !unitTimeoutHandle && !wrapupWarningHandle) {
-      ctx.ui.notify(
-        "Auto-mode stalled — no dispatchable unit found after retry. Stopping. Run /gsd auto to restart.",
-        "warning",
-      );
-      await stopAuto(ctx, pi);
+      await stopAuto(ctx, pi, "Stalled — no dispatchable unit after retry");
     }
   }, DISPATCH_GAP_TIMEOUT_MS);
 }
 
-export async function stopAuto(ctx?: ExtensionContext, pi?: ExtensionAPI): Promise<void> {
+export async function stopAuto(ctx?: ExtensionContext, pi?: ExtensionAPI, reason?: string): Promise<void> {
   if (!active && !paused) return;
   clearUnitTimeout();
   if (basePath) clearLock(basePath);
@@ -399,15 +391,16 @@ export async function stopAuto(ctx?: ExtensionContext, pi?: ExtensionAPI): Promi
     }
   }
 
+  const reasonSuffix = reason ? `: ${reason}` : "";
   const ledger = getLedger();
   if (ledger && ledger.units.length > 0) {
     const totals = getProjectTotals(ledger.units);
     ctx?.ui.notify(
-      `Auto-mode stopped. Session: ${formatCost(totals.cost)} · ${formatTokenCount(totals.tokens.total)} tokens · ${ledger.units.length} units`,
+      `Auto-mode stopped${reasonSuffix}. Session: ${formatCost(totals.cost)} · ${formatTokenCount(totals.tokens.total)} tokens · ${ledger.units.length} units`,
       "info",
     );
   } else {
-    ctx?.ui.notify("Auto-mode stopped.", "info");
+    ctx?.ui.notify(`Auto-mode stopped${reasonSuffix}.`, "info");
   }
 
   // Sync disk state so next resume starts from accurate state
@@ -952,7 +945,7 @@ export async function handleAgentEnd(
       const result = await cmdCtx!.newSession();
       if (result.cancelled) {
         resetHookState();
-        await stopAuto(ctx, pi);
+        await stopAuto(ctx, pi, "Hook session cancelled");
         return;
       }
       const sessionFile = ctx.sessionManager.getSessionFile();
@@ -1069,7 +1062,15 @@ async function showStepWizard(
 
   // If no active milestone or everything is complete, stop
   if (!mid || state.phase === "complete") {
-    await stopAuto(ctx, pi);
+    const incomplete = state.registry.filter(m => m.status !== "complete");
+    if (incomplete.length > 0 && state.phase !== "complete" && state.phase !== "blocked") {
+      const ids = incomplete.map(m => m.id).join(", ");
+      const diag = `basePath=${basePath}, milestones=[${state.registry.map(m => `${m.id}:${m.status}`).join(", ")}], phase=${state.phase}`;
+      ctx.ui.notify(`Unexpected: ${incomplete.length} incomplete milestone(s) (${ids}) but no active milestone.\n   Diagnostic: ${diag}`, "error");
+      await stopAuto(ctx, pi, `No active milestone — ${incomplete.length} incomplete (${ids})`);
+    } else {
+      await stopAuto(ctx, pi, state.phase === "complete" ? "All work complete" : "No active milestone");
+    }
     return;
   }
 
@@ -1189,8 +1190,7 @@ async function dispatchNextUnit(
   // doesn't provide. Stop gracefully instead of crashing.
   const staleMsg = checkResourcesStale();
   if (staleMsg) {
-    await stopAuto(ctx, pi);
-    ctx.ui.notify(staleMsg, "error");
+    await stopAuto(ctx, pi, staleMsg);
     return;
   }
 
@@ -1229,8 +1229,25 @@ async function dispatchNextUnit(
       snapshotUnitMetrics(ctx, currentUnit.type, currentUnit.id, currentUnit.startedAt, modelId);
       saveActivityLog(ctx, basePath, currentUnit.type, currentUnit.id);
     }
-    sendDesktopNotification("GSD", "All milestones complete!", "success", "milestone");
-    await stopAuto(ctx, pi);
+
+    const incomplete = state.registry.filter(m => m.status !== "complete");
+    if (incomplete.length === 0) {
+      // Genuinely all complete
+      sendDesktopNotification("GSD", "All milestones complete!", "success", "milestone");
+      await stopAuto(ctx, pi, "All milestones complete");
+    } else if (state.phase === "blocked") {
+      // Milestones exist but are dependency-blocked
+      const blockerMsg = `Blocked: ${state.blockers.join(", ")}`;
+      await stopAuto(ctx, pi, blockerMsg);
+      ctx.ui.notify(`${blockerMsg}. Fix and run /gsd auto.`, "warning");
+      sendDesktopNotification("GSD", blockerMsg, "error", "attention");
+    } else {
+      // Milestones with remaining work exist but none became active — unexpected
+      const ids = incomplete.map(m => m.id).join(", ");
+      const diag = `basePath=${basePath}, milestones=[${state.registry.map(m => `${m.id}:${m.status}`).join(", ")}], phase=${state.phase}`;
+      ctx.ui.notify(`Unexpected: ${incomplete.length} incomplete milestone(s) (${ids}) but no active milestone.\n   Diagnostic: ${diag}`, "error");
+      await stopAuto(ctx, pi, `No active milestone — ${incomplete.length} incomplete (${ids}), see diagnostic above`);
+    }
     return;
   }
 
@@ -1238,8 +1255,8 @@ async function dispatchNextUnit(
   // The !mid check above returns early if mid is falsy; midTitle comes from
   // the same object so it should always be present when mid is.
   if (!midTitle) {
-    await stopAuto(ctx, pi);
-    return;
+    midTitle = mid; // Defensive fallback: use milestone ID as title
+    ctx.ui.notify(`Milestone ${mid} has no title in roadmap — using ID as fallback.`, "warning");
   }
 
   // ── Mid-merge safety check: detect leftover merge state from a prior session ──
@@ -1257,7 +1274,10 @@ async function dispatchNextUnit(
       snapshotUnitMetrics(ctx, currentUnit.type, currentUnit.id, currentUnit.startedAt, modelId);
       saveActivityLog(ctx, basePath, currentUnit.type, currentUnit.id);
     }
-    await stopAuto(ctx, pi);
+    const noMilestoneReason = !mid
+      ? "No active milestone after merge reconciliation"
+      : `Milestone ${mid} has no title after reconciliation`;
+    await stopAuto(ctx, pi, noMilestoneReason);
     return;
   }
 
@@ -1299,7 +1319,7 @@ async function dispatchNextUnit(
       }
     }
     sendDesktopNotification("GSD", `Milestone ${mid} complete!`, "success", "milestone");
-    await stopAuto(ctx, pi);
+    await stopAuto(ctx, pi, `Milestone ${mid} complete`);
     return;
   }
 
@@ -1309,8 +1329,8 @@ async function dispatchNextUnit(
       snapshotUnitMetrics(ctx, currentUnit.type, currentUnit.id, currentUnit.startedAt, modelId);
       saveActivityLog(ctx, basePath, currentUnit.type, currentUnit.id);
     }
-    await stopAuto(ctx, pi);
     const blockerMsg = `Blocked: ${state.blockers.join(", ")}`;
+    await stopAuto(ctx, pi, blockerMsg);
     ctx.ui.notify(`${blockerMsg}. Fix and run /gsd auto.`, "warning");
     sendDesktopNotification("GSD", blockerMsg, "error", "attention");
     return;
@@ -1336,9 +1356,8 @@ async function dispatchNextUnit(
       const msg = `Budget ceiling ${formatCost(budgetCeiling)} reached (spent ${formatCost(totalCost)}).`;
       lastBudgetAlertLevel = newBudgetAlertLevel;
       if (budgetEnforcementAction === "halt") {
-        ctx.ui.notify(`${msg} Stopping auto-mode.`, "error");
         sendDesktopNotification("GSD", msg, "error", "budget");
-        await stopAuto(ctx, pi);
+        await stopAuto(ctx, pi, "Budget ceiling reached");
         return;
       }
       if (budgetEnforcementAction === "pause") {
@@ -1417,8 +1436,7 @@ async function dispatchNextUnit(
       snapshotUnitMetrics(ctx, currentUnit.type, currentUnit.id, currentUnit.startedAt, modelId);
       saveActivityLog(ctx, basePath, currentUnit.type, currentUnit.id);
     }
-    await stopAuto(ctx, pi);
-    ctx.ui.notify(dispatchResult.reason, dispatchResult.level);
+    await stopAuto(ctx, pi, dispatchResult.reason);
     return;
   }
 
@@ -1458,8 +1476,7 @@ async function dispatchNextUnit(
 
   const priorSliceBlocker = getPriorSliceCompletionBlocker(basePath, getMainBranch(basePath), unitType, unitId);
   if (priorSliceBlocker) {
-    await stopAuto(ctx, pi);
-    ctx.ui.notify(priorSliceBlocker, "error");
+    await stopAuto(ctx, pi, priorSliceBlocker);
     return;
   }
 
@@ -1528,9 +1545,9 @@ async function dispatchNextUnit(
     }
     saveActivityLog(ctx, basePath, unitType, unitId);
     const expected = diagnoseExpectedArtifact(unitType, unitId, basePath);
-    await stopAuto(ctx, pi);
+    await stopAuto(ctx, pi, `Hard loop: ${unitType} ${unitId}`);
     ctx.ui.notify(
-      `Hard loop detected: ${unitType} ${unitId} dispatched ${lifetimeCount} times total (across reconciliation cycles). Stopping.${expected ? `\n   Expected artifact: ${expected}` : ""}\n   This may indicate deriveState() keeps returning the same unit despite artifacts existing.\n   Check .gsd/completed-units.json and the slice plan checkbox state.`,
+      `Hard loop detected: ${unitType} ${unitId} dispatched ${lifetimeCount} times total (across reconciliation cycles).${expected ? `\n   Expected artifact: ${expected}` : ""}\n   This may indicate deriveState() keeps returning the same unit despite artifacts existing.\n   Check .gsd/completed-units.json and the slice plan checkbox state.`,
       "error",
     );
     return;
@@ -1623,7 +1640,7 @@ async function dispatchNextUnit(
 
     const expected = diagnoseExpectedArtifact(unitType, unitId, basePath);
     const remediation = buildLoopRemediationSteps(unitType, unitId, basePath);
-    await stopAuto(ctx, pi);
+    await stopAuto(ctx, pi, `Loop: ${unitType} ${unitId}`);
     sendDesktopNotification("GSD", `Loop detected: ${unitType} ${unitId}`, "error", "error");
     ctx.ui.notify(
       `Loop detected: ${unitType} ${unitId} dispatched ${prevCount + 1} times total. Expected artifact not found.${expected ? `\n   Expected: ${expected}` : ""}${remediation ? `\n\n   Remediation steps:\n${remediation}` : "\n   Check branch state and .gsd/ artifacts."}`,
@@ -1749,8 +1766,7 @@ async function dispatchNextUnit(
   // Fresh session
   const result = await cmdCtx!.newSession();
   if (result.cancelled) {
-    await stopAuto(ctx, pi);
-    ctx.ui.notify("Auto-mode stopped.", "info");
+    await stopAuto(ctx, pi, "Session cancelled");
     return;
   }
 

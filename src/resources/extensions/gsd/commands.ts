@@ -181,7 +181,7 @@ export function registerGSDCommand(pi: ExtensionAPI): void {
           ctx.ui.notify("Auto-mode is not running.", "info");
           return;
         }
-        await stopAuto(ctx, pi);
+        await stopAuto(ctx, pi, "User requested stop");
         return;
       }
 
