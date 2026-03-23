@@ -14,6 +14,11 @@ key_decisions:
   - Slice/task planning writes use dedicated `upsertTaskPlanning()` updates layered on top of `insertTask()` seed rows so rerunning planning does not erase execution/completion fields stored on existing tasks.
   - `handlePlanSlice()` follows a DB-first flow that writes slice/task planning rows transactionally, then renders the slice plan plus all task-plan files; cache invalidation remains post-render only, and observability is proven through parse-visible file state rather than internal spies.
   - `handlePlanTask()` creates a pending task row only when absent, then updates planning fields and renders the task plan artifact, preserving idempotence for reruns against existing tasks.
+observability_surfaces:
+  - "plan-slice.ts handler error payloads — structured failure messages for validation/DB/render failures returned in tool result"
+  - "plan-task.ts handler error payloads — structured failure messages for validation/missing-parent/render failures"
+  - "invalidateStateCache() + clearParseCache() after successful render — ensures callers see fresh state immediately"
+  - "parse-visible file state — rendered PLAN.md and task-plan files are reparseable proof of handler success"
 duration: ""
 verification_result: passed
 completed_at: 2026-03-23T16:05:04.223Z
@@ -48,6 +53,13 @@ Updated `.gsd/milestones/M001/slices/S02/S02-PLAN.md` with an explicit diagnosti
 ## Known Issues
 
 None.
+
+## Diagnostics
+
+- **Handler test suite:** Run `node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental-strip-types --test src/resources/extensions/gsd/tests/plan-slice.test.ts src/resources/extensions/gsd/tests/plan-task.test.ts` — 10 tests covering validation, parent checks, render failure, idempotence, and cache refresh.
+- **Tool registration:** Check `db-tools.ts` for `gsd_plan_slice` and `gsd_plan_task` canonical names plus `gsd_slice_plan` and `gsd_task_plan` aliases.
+- **DB query helpers:** `upsertTaskPlanning()` in `gsd-db.ts` — updates planning fields without clobbering completion state.
+- **Handler error payloads:** Both handlers return structured `{ error: true, message: string }` on validation/DB/render failures, surfaced in tool result payloads.
 
 ## Files Created/Modified
 

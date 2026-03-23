@@ -9,6 +9,10 @@ key_files:
   - .gsd/milestones/M001/slices/S02/tasks/T03-PLAN.md
 key_decisions:
   - The plan-slice prompt now uses `gsd_plan_slice` and `gsd_plan_task` as the primary numbered step (step 6) instead of a conditional afterthought (old step 8), with direct file writes explicitly labeled as a degraded fallback (step 7).
+observability_surfaces:
+  - "prompt-contracts.test.ts — 4 new assertions for plan-slice prompt DB-backed tool references, degraded-fallback framing, and per-task tool call instruction"
+  - "plan-slice-prompt.test.ts — template substitution test proving tool names survive variable replacement"
+  - "plan-slice.md prompt text — explicit step 6 naming gsd_plan_slice/gsd_plan_task as canonical path"
 duration: ""
 verification_result: passed
 completed_at: 2026-03-23T16:08:41.655Z
@@ -50,6 +54,12 @@ None.
 ## Known Issues
 
 None.
+
+## Diagnostics
+
+- **Prompt contract tests:** Run `node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental-strip-types --test src/resources/extensions/gsd/tests/prompt-contracts.test.ts --test-name-pattern="plan-slice"` — verifies tool names, degraded-fallback framing, and per-task instruction in the prompt.
+- **Template substitution test:** Run `node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental-strip-types --test src/resources/extensions/gsd/tests/plan-slice-prompt.test.ts` — confirms DB-backed tool names survive variable substitution.
+- **Prompt source:** Read `src/resources/extensions/gsd/prompts/plan-slice.md` — step 6 names `gsd_plan_slice` and `gsd_plan_task` as canonical; step 7 is degraded fallback.
 
 ## Files Created/Modified
 

@@ -11,6 +11,10 @@ key_decisions:
   - Rendered task-plan files use conservative `skills_used: []` frontmatter so execution-time skill activation remains explicit and no secret-bearing or speculative values are emitted from DB state.
   - Slice-plan verification content is sourced from the slice `observability_impact` field when present so the DB-backed renderer preserves inspectable diagnostics/failure-path expectations instead of emitting a placeholder-only section.
   - `renderPlanFromDb()` eagerly renders all child task-plan files after writing the slice plan so `verifyExpectedArtifact("plan-slice", ...)` sees a truthful on-disk artifact set immediately.
+observability_surfaces:
+  - "markdown-renderer.ts stderr warnings on stale renders (detectStaleRenders) — visible on stderr when rendered plans drift from DB state"
+  - "auto-recovery.ts verifyExpectedArtifact('plan-slice', ...) — rejects when task-plan files are missing from disk"
+  - "SQLite artifacts table rows for S##-PLAN.md and T##-PLAN.md — queryable proof of renderer output"
 duration: ""
 verification_result: mixed
 completed_at: 2026-03-23T15:58:46.134Z
@@ -46,6 +50,13 @@ Did not edit `src/resources/extensions/gsd/files.ts`; the existing parser contra
 ## Known Issues
 
 The slice plan still references `src/resources/extensions/gsd/tests/plan-slice.test.ts` and `src/resources/extensions/gsd/tests/plan-task.test.ts`, but neither file exists in this checkout. Until those tests land, slice-level verification for planning work must rely on the existing `markdown-renderer.test.ts`, `auto-recovery.test.ts`, and related prompt-contract tests.
+
+## Diagnostics
+
+- **Rendered artifacts on disk:** Check `S##-PLAN.md` and `tasks/T##-PLAN.md` files in the milestone/slice directory — these are the renderer output and must parse cleanly via `parsePlan()` and `parseTaskPlanFile()`.
+- **Artifacts table in SQLite:** Query `SELECT * FROM artifacts WHERE path LIKE '%PLAN.md'` to verify renderer wrote artifact records.
+- **Stale render detection:** Run `detectStaleRenders(db, basePath, milestoneId)` — it reports plan checkbox mismatches and missing task summaries on stderr.
+- **Recovery verification:** Call `verifyExpectedArtifact("plan-slice", basePath, milestoneId, sliceId)` — returns a diagnostic object with pass/fail plus the list of missing task-plan files.
 
 ## Files Created/Modified
 

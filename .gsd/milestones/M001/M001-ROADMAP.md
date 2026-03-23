@@ -55,7 +55,7 @@ This milestone is complete only when all are true:
 - [x] **S01: Schema v8 + plan_milestone tool + ROADMAP renderer** `risk:high` `depends:[]`
   > After this: gsd_plan_milestone tool accepts structured params, writes to DB, renders ROADMAP.md from DB state. Parsers still work as fallback. Schema v8 migration runs on existing DBs. Rogue detection extended for ROADMAP writes.
 
-- [ ] **S02: plan_slice + plan_task tools + PLAN/task-plan renderers** `risk:high` `depends:[S01]`
+- [x] **S02: plan_slice + plan_task tools + PLAN/task-plan renderers** `risk:high` `depends:[S01]`
   > After this: gsd_plan_slice and gsd_plan_task tools accept structured params, write to DB, render S##-PLAN.md and T##-PLAN.md from DB. Task plan files pass existence checks. Prompt migration for plan-slice.md complete.
 
 - [ ] **S03: replan_slice + reassess_roadmap with structural enforcement** `risk:medium` `depends:[S01,S02]`
