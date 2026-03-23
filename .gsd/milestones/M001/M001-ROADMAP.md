@@ -58,7 +58,7 @@ This milestone is complete only when all are true:
 - [x] **S02: plan_slice + plan_task tools + PLAN/task-plan renderers** `risk:high` `depends:[S01]`
   > After this: gsd_plan_slice and gsd_plan_task tools accept structured params, write to DB, render S##-PLAN.md and T##-PLAN.md from DB. Task plan files pass existence checks. Prompt migration for plan-slice.md complete.
 
-- [ ] **S03: replan_slice + reassess_roadmap with structural enforcement** `risk:medium` `depends:[S01,S02]`
+- [x] **S03: replan_slice + reassess_roadmap with structural enforcement** `risk:medium` `depends:[S01,S02]`
   > After this: gsd_replan_slice rejects mutations to completed tasks, gsd_reassess_roadmap rejects mutations to completed slices. replan_history and assessments tables populated. REPLAN.md and ASSESSMENT.md rendered from DB.
 
 - [ ] **S04: Hot-path caller migration + cross-validation tests** `risk:medium` `depends:[S01,S02]`

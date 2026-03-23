@@ -9,6 +9,10 @@ key_files:
 key_decisions:
   - Added updateSliceFields() to gsd-db.ts for title/risk/depends/demo updates because upsertSlicePlanning() only handles planning-level fields (goal, success_criteria, etc.) — keeps DB API consistent rather than using raw SQL in the handler
   - Added getAssessment() query helper to gsd-db.ts for test verification of assessments DB persistence — follows the same pattern as getReplanHistory() added in T01
+observability_surfaces:
+  - "assessments DB table — query with getAssessment(db, path) to inspect assessment events"
+  - "ASSESSMENT.md artifact on disk — rendered at slices/S##/ASSESSMENT.md with verdict and assessment text"
+  - "Handler error payloads — { error: string } naming the specific completed slice ID that blocked the mutation"
 duration: ""
 verification_result: passed
 completed_at: 2026-03-23T16:32:59.273Z
@@ -51,6 +55,13 @@ Added `updateSliceFields()` to `gsd-db.ts` (not in task plan's expected output) 
 ## Known Issues
 
 None.
+
+## Diagnostics
+
+- **Inspect assessments:** `getAssessment(db, path)` returns the assessment row for a given artifact path.
+- **Verify structural enforcement:** Run `reassess-handler.test.ts` — tests "rejects structural violation: modifying a completed slice" and "removing a completed slice" prove the enforcement gate.
+- **Check rendered artifacts:** After a successful reassess, `ASSESSMENT.md` exists at `slices/S##/ASSESSMENT.md` and ROADMAP.md is re-rendered.
+- **Error payloads:** Handler returns `{ error: "Cannot modify/remove completed slice S##..." }` with the specific slice ID.
 
 ## Files Created/Modified
 

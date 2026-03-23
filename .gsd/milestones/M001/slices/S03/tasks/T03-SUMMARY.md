@@ -9,6 +9,10 @@ key_files:
   - src/resources/extensions/gsd/tests/prompt-contracts.test.ts
 key_decisions:
   - Prompt updates position the DB-backed tool as canonical write path with direct file writes as degraded fallback — consistent with the pattern established for plan-slice and plan-milestone prompts
+observability_surfaces:
+  - "db-tools.ts tool registrations — grep for gsd_replan_slice and gsd_reassess_roadmap to verify wiring"
+  - "Prompt contract tests — prompt-contracts.test.ts asserts tool names appear in prompts as regression guard"
+  - "Prompt files — replan-slice.md and reassess-roadmap.md contain canonical write path instructions"
 duration: ""
 verification_result: passed
 completed_at: 2026-03-23T16:36:49.549Z
@@ -65,6 +69,12 @@ None.
 ## Known Issues
 
 None.
+
+## Diagnostics
+
+- **Verify tool registration:** `grep -q 'gsd_replan_slice' src/resources/extensions/gsd/bootstrap/db-tools.ts && grep -q 'gsd_reassess_roadmap' src/resources/extensions/gsd/bootstrap/db-tools.ts` — both must succeed.
+- **Verify prompt wiring:** `grep -q 'gsd_replan_slice' src/resources/extensions/gsd/prompts/replan-slice.md && grep -q 'gsd_reassess_roadmap' src/resources/extensions/gsd/prompts/reassess-roadmap.md` — both must succeed.
+- **Prompt contract regression guard:** Run `prompt-contracts.test.ts` — 28 tests including the 2 new tool-name assertions catch regressions if someone removes the canonical tool references from prompts.
 
 ## Files Created/Modified
 

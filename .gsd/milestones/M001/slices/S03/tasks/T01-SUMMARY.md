@@ -12,6 +12,10 @@ key_decisions:
   - deleteTask() deletes verification_evidence before task row to avoid FK constraint violations — cascade-style manual deletion pattern
   - Structural enforcement checks both 'complete' and 'done' statuses as completed-task indicators
   - Error payloads include the specific task ID that blocked the mutation for actionable diagnostics
+observability_surfaces:
+  - "replan_history DB table — query with getReplanHistory(db, milestoneId, sliceId) to inspect replan events"
+  - "REPLAN.md artifact on disk — rendered at slices/S##/REPLAN.md with blocker description and what changed"
+  - "Handler error payloads — { error: string } naming the specific completed task ID that blocked the mutation"
 duration: ""
 verification_result: passed
 completed_at: 2026-03-23T16:28:29.943Z
@@ -56,6 +60,13 @@ Added `getReplanHistory()` query helper to `gsd-db.ts` (not in plan) — needed 
 ## Known Issues
 
 None.
+
+## Diagnostics
+
+- **Inspect replan history:** `getReplanHistory(db, milestoneId, sliceId)` returns all replan events for a slice including blocker description, what changed, and timestamps.
+- **Verify structural enforcement:** Run `replan-handler.test.ts` — tests "rejects structural violation: updating a completed task" and "removing a completed task" prove the enforcement gate.
+- **Check rendered artifacts:** After a successful replan, `REPLAN.md` exists at `slices/S##/REPLAN.md` and PLAN.md is re-rendered with updated tasks.
+- **Error payloads:** Handler returns `{ error: "Cannot update/remove completed task T##..." }` with the specific task ID.
 
 ## Files Created/Modified
 
