@@ -36,6 +36,8 @@ GSD extension source code is at: `{{gsdSourceDir}}`
 ├── doctor-history.jsonl         — doctor check history
 ├── activity/                    — session activity logs (JSONL per unit)
 │   └── {seq}-{unitType}-{unitId}.jsonl
+├── journal/                     — structured event journal (JSONL per day)
+│   └── YYYY-MM-DD.jsonl
 ├── runtime/
 │   ├── paused-session.json      — serialized session when auto pauses
 │   └── headless-context.md      — headless resume context
@@ -60,6 +62,32 @@ GSD extension source code is at: `{{gsdSourceDir}}`
 - `usage` field on assistant messages: `input`, `output`, `cacheRead`, `cacheWrite`, `totalTokens`, `cost`
 - **To trace a failure**: find the last activity log, search for `isError: true` tool results, then read the agent's reasoning text preceding that error
 
+### Journal Format (`.gsd/journal/`)
+
+The journal is a structured event log for auto-mode iterations. Each daily file contains JSONL entries:
+
+```
+{ ts: "ISO-8601", flowId: "UUID", seq: 0, eventType: "iteration-start", rule?: "rule-name", causedBy?: { flowId, seq }, data?: { unitId, status, ... } }
+```
+
+**Key event types:**
+- `iteration-start` / `iteration-end` — marks loop iteration boundaries
+- `dispatch-match` / `dispatch-stop` — what the auto-mode decided to do (or not do)
+- `unit-start` / `unit-end` — lifecycle of individual work units
+- `terminal` — auto-mode reached a terminal state (all done, budget exceeded, etc.)
+- `guard-block` — dispatch was blocked by a guard condition (e.g. needs user input)
+- `stuck-detected` — the loop detected it was stuck (same unit repeatedly dispatched)
+- `milestone-transition` — a milestone was promoted or completed
+- `worktree-enter` / `worktree-create-failed` / `worktree-merge-start` / `worktree-merge-failed` — worktree operations
+
+**Key concepts:**
+- **flowId**: UUID grouping all events in one iteration. Use to reconstruct what happened in a single loop pass.
+- **causedBy**: Cross-reference to a prior event (same or different flow). Enables causal chain tracing.
+- **seq**: Monotonically increasing within a flow. Reconstruct event order within an iteration.
+
+**To trace a stuck loop**: filter for `stuck-detected` events, then follow `flowId` to see the surrounding dispatch and unit events.
+**To trace a guard block**: filter for `guard-block` events, check `data.reason` for why dispatch was blocked.
+
 ### Crash Lock Format (`auto.lock`)
 
 JSON with fields: `pid`, `startedAt`, `unitType`, `unitId`, `unitStartedAt`, `completedUnits`, `sessionFile`
@@ -78,20 +106,24 @@ A unit dispatched more than once (`type/id` appears multiple times) indicates a 
 
 1. **Start with the pre-parsed forensic report** above. The anomaly section contains automated findings — treat these as leads, not conclusions.
 
-2. **Form hypotheses** about which module and code path is responsible. Use the source map to identify candidate files.
+2. **Check the journal timeline** if present. The journal events show the auto-mode's decision sequence (dispatches, guards, stuck detection, worktree operations). Use flow IDs to group related events and trace causal chains.
 
-3. **Read the actual GSD source code** at `{{gsdSourceDir}}` to confirm or deny each hypothesis. Do not guess what code does — read it.
+3. **Cross-reference activity logs and journal**. Activity logs show *what the LLM did* (tool calls, reasoning, errors). Journal events show *what auto-mode decided* (dispatch rules, iteration boundaries, state transitions). Together they reveal the full picture.
 
-4. **Trace the code path** from the entry point (usually `auto-loop.ts` dispatch or `auto-dispatch.ts`) through to the failure point. Follow function calls across files.
+4. **Form hypotheses** about which module and code path is responsible. Use the source map to identify candidate files.
 
-5. **Identify the specific file and line** where the bug lives. Determine what kind of defect it is:
+5. **Read the actual GSD source code** at `{{gsdSourceDir}}` to confirm or deny each hypothesis. Do not guess what code does — read it.
+
+6. **Trace the code path** from the entry point (usually `auto-loop.ts` dispatch or `auto-dispatch.ts`) through to the failure point. Follow function calls across files.
+
+7. **Identify the specific file and line** where the bug lives. Determine what kind of defect it is:
    - Missing edge case / unhandled condition
    - Wrong boolean logic or comparison
    - Race condition or ordering issue
    - State corruption (e.g. completed-units.json out of sync with artifacts)
    - Timeout / recovery logic not triggering correctly
 
-6. **Clarify if needed.** Use ask_user_questions (max 2 questions) only if the report is genuinely insufficient. Do not ask questions you can answer from the data or source code.
+8. **Clarify if needed.** Use ask_user_questions (max 2 questions) only if the report is genuinely insufficient. Do not ask questions you can answer from the data or source code.
 
 ## Output
 

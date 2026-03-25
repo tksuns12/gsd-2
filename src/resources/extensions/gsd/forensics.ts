@@ -28,6 +28,7 @@ import { deriveState } from "./state.js";
 import { isAutoActive } from "./auto.js";
 import { loadPrompt } from "./prompt-loader.js";
 import { gsdRoot } from "./paths.js";
+import { queryJournal } from "./journal.js";
 import { formatDuration } from "../shared/format-utils.js";
 import { getAutoWorktreePath } from "./auto-worktree.js";
 import { loadEffectiveGSDPreferences, loadGlobalGSDPreferences, getGlobalGSDPreferencesPath } from "./preferences.js";
@@ -37,7 +38,7 @@ import { ensurePreferencesFile, serializePreferencesToFrontmatter } from "./comm
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface ForensicAnomaly {
-  type: "stuck-loop" | "cost-spike" | "timeout" | "missing-artifact" | "crash" | "doctor-issue" | "error-trace";
+  type: "stuck-loop" | "cost-spike" | "timeout" | "missing-artifact" | "crash" | "doctor-issue" | "error-trace" | "journal-stuck" | "journal-guard-block" | "journal-rapid-iterations" | "journal-worktree-failure";
   severity: "info" | "warning" | "error";
   unitType?: string;
   unitId?: string;
@@ -54,6 +55,31 @@ interface UnitTrace {
   mtime: number;
 }
 
+/** Summary of .gsd/activity/ directory metadata. */
+interface ActivityLogMeta {
+  fileCount: number;
+  totalSizeBytes: number;
+  oldestFile: string | null;
+  newestFile: string | null;
+}
+
+/** Summary of .gsd/journal/ data for forensic investigation. */
+interface JournalSummary {
+  /** Total journal entries scanned */
+  totalEntries: number;
+  /** Distinct flow IDs (each = one auto-mode iteration) */
+  flowCount: number;
+  /** Event counts by type */
+  eventCounts: Record<string, number>;
+  /** Most recent journal entries (last 20) for context */
+  recentEvents: { ts: string; flowId: string; eventType: string; rule?: string; unitId?: string }[];
+  /** Date range of journal data */
+  oldestEntry: string | null;
+  newestEntry: string | null;
+  /** Daily file count */
+  fileCount: number;
+}
+
 interface ForensicReport {
   gsdVersion: string;
   timestamp: string;
@@ -68,6 +94,8 @@ interface ForensicReport {
   doctorIssues: DoctorIssue[];
   anomalies: ForensicAnomaly[];
   recentUnits: { type: string; id: string; cost: number; duration: number; model: string; finishedAt: number }[];
+  journalSummary: JournalSummary | null;
+  activityLogMeta: ActivityLogMeta | null;
 }
 
 // ─── Duplicate Detection ──────────────────────────────────────────────────────
@@ -276,7 +304,13 @@ export async function buildForensicReport(basePath: string): Promise<ForensicRep
   // from import.meta.url would resolve to ~/package.json (wrong on every system).
   const gsdVersion = process.env.GSD_VERSION || "unknown";
 
-  // 9. Run anomaly detectors
+  // 9. Scan journal for flow timeline and structured events
+  const journalSummary = scanJournalForForensics(basePath);
+
+  // 10. Gather activity log directory metadata
+  const activityLogMeta = gatherActivityLogMeta(basePath, activeMilestone);
+
+  // 11. Run anomaly detectors
   if (metrics?.units) detectStuckLoops(metrics.units, anomalies);
   if (metrics?.units) detectCostSpikes(metrics.units, anomalies);
   detectTimeouts(unitTraces, anomalies);
@@ -284,6 +318,7 @@ export async function buildForensicReport(basePath: string): Promise<ForensicRep
   detectCrash(crashLock, anomalies);
   detectDoctorIssues(doctorIssues, anomalies);
   detectErrorTraces(unitTraces, anomalies);
+  detectJournalAnomalies(journalSummary, anomalies);
 
   return {
     gsdVersion,
@@ -299,6 +334,8 @@ export async function buildForensicReport(basePath: string): Promise<ForensicRep
     doctorIssues,
     anomalies,
     recentUnits,
+    journalSummary,
+    activityLogMeta,
   };
 }
 
@@ -378,6 +415,89 @@ function resolveActivityDirs(basePath: string, activeMilestone?: string | null):
   dirs.push(rootActivityDir);
 
   return dirs;
+}
+
+// ─── Journal Scanner ──────────────────────────────────────────────────────────
+
+function scanJournalForForensics(basePath: string): JournalSummary | null {
+  try {
+    const journalDir = join(gsdRoot(basePath), "journal");
+    if (!existsSync(journalDir)) return null;
+
+    const files = readdirSync(journalDir).filter(f => f.endsWith(".jsonl")).sort();
+    if (files.length === 0) return null;
+
+    const entries = queryJournal(basePath);
+    if (entries.length === 0) return null;
+
+    // Count events by type
+    const eventCounts: Record<string, number> = {};
+    const flowIds = new Set<string>();
+    for (const e of entries) {
+      eventCounts[e.eventType] = (eventCounts[e.eventType] ?? 0) + 1;
+      flowIds.add(e.flowId);
+    }
+
+    // Extract recent events (last 20) with key fields for the report
+    const recentEvents = entries.slice(-20).map(e => ({
+      ts: e.ts,
+      flowId: e.flowId,
+      eventType: e.eventType,
+      rule: e.rule,
+      unitId: (e.data as Record<string, unknown> | undefined)?.unitId as string | undefined,
+    }));
+
+    return {
+      totalEntries: entries.length,
+      flowCount: flowIds.size,
+      eventCounts,
+      recentEvents,
+      oldestEntry: entries[0]?.ts ?? null,
+      newestEntry: entries[entries.length - 1]?.ts ?? null,
+      fileCount: files.length,
+    };
+  } catch {
+    return null;
+  }
+}
+
+// ─── Activity Log Metadata ────────────────────────────────────────────────────
+
+function gatherActivityLogMeta(basePath: string, activeMilestone?: string | null): ActivityLogMeta | null {
+  try {
+    const activityDirs = resolveActivityDirs(basePath, activeMilestone);
+    let fileCount = 0;
+    let totalSizeBytes = 0;
+    let oldestFile: string | null = null;
+    let newestFile: string | null = null;
+    let oldestMtime = Infinity;
+    let newestMtime = 0;
+
+    for (const activityDir of activityDirs) {
+      if (!existsSync(activityDir)) continue;
+      const files = readdirSync(activityDir).filter(f => f.endsWith(".jsonl"));
+      for (const file of files) {
+        const filePath = join(activityDir, file);
+        const stat = statSync(filePath, { throwIfNoEntry: false });
+        if (!stat) continue;
+        fileCount++;
+        totalSizeBytes += stat.size;
+        if (stat.mtimeMs < oldestMtime) {
+          oldestMtime = stat.mtimeMs;
+          oldestFile = file;
+        }
+        if (stat.mtimeMs > newestMtime) {
+          newestMtime = stat.mtimeMs;
+          newestFile = file;
+        }
+      }
+    }
+
+    if (fileCount === 0) return null;
+    return { fileCount, totalSizeBytes, oldestFile, newestFile };
+  } catch {
+    return null;
+  }
 }
 
 // ─── Completed Keys Loader ────────────────────────────────────────────────────
@@ -524,6 +644,66 @@ function detectErrorTraces(traces: UnitTrace[], anomalies: ForensicAnomaly[]): v
   }
 }
 
+function detectJournalAnomalies(journal: JournalSummary | null, anomalies: ForensicAnomaly[]): void {
+  if (!journal) return;
+
+  // Detect stuck-detected events from the journal
+  const stuckCount = journal.eventCounts["stuck-detected"] ?? 0;
+  if (stuckCount > 0) {
+    anomalies.push({
+      type: "journal-stuck",
+      severity: stuckCount >= 3 ? "error" : "warning",
+      summary: `Journal recorded ${stuckCount} stuck-detected event(s)`,
+      details: `The auto-mode loop detected it was stuck ${stuckCount} time(s). Check journal events for flow IDs and causal chains to trace the root cause.`,
+    });
+  }
+
+  // Detect guard-block events (dispatch was blocked by a guard)
+  const guardCount = journal.eventCounts["guard-block"] ?? 0;
+  if (guardCount > 0) {
+    anomalies.push({
+      type: "journal-guard-block",
+      severity: guardCount >= 5 ? "warning" : "info",
+      summary: `Journal recorded ${guardCount} guard-block event(s)`,
+      details: `Dispatch was blocked by a guard condition ${guardCount} time(s). This may indicate a persistent blocking condition preventing progress.`,
+    });
+  }
+
+  // Detect rapid iterations (many flows in short time = likely thrashing)
+  if (journal.flowCount > 0 && journal.oldestEntry && journal.newestEntry) {
+    const oldest = new Date(journal.oldestEntry).getTime();
+    const newest = new Date(journal.newestEntry).getTime();
+    const spanMs = newest - oldest;
+    if (spanMs > 0 && journal.flowCount > 10) {
+      const avgMs = spanMs / journal.flowCount;
+      if (avgMs < 5000) { // Less than 5 seconds per iteration
+        anomalies.push({
+          type: "journal-rapid-iterations",
+          severity: "warning",
+          summary: `${journal.flowCount} iterations in ${formatDuration(spanMs)} (avg ${formatDuration(avgMs)}/iteration)`,
+          details: `Unusually rapid iteration cadence suggests the loop may be thrashing without making progress. Review recent journal events for dispatch-stop or terminal events.`,
+        });
+      }
+    }
+  }
+
+  // Detect worktree failures from journal events
+  const wtCreateFailed = journal.eventCounts["worktree-create-failed"] ?? 0;
+  const wtMergeFailed = journal.eventCounts["worktree-merge-failed"] ?? 0;
+  const wtFailures = wtCreateFailed + wtMergeFailed;
+  if (wtFailures > 0) {
+    const parts: string[] = [];
+    if (wtCreateFailed > 0) parts.push(`${wtCreateFailed} create failure(s)`);
+    if (wtMergeFailed > 0) parts.push(`${wtMergeFailed} merge failure(s)`);
+    anomalies.push({
+      type: "journal-worktree-failure",
+      severity: "warning",
+      summary: `Worktree failures: ${parts.join(", ")}`,
+      details: `Journal recorded worktree operation failures. These may indicate git state corruption or conflicting branches.`,
+    });
+  }
+}
+
 // ─── Report Persistence ───────────────────────────────────────────────────────
 
 function saveForensicReport(basePath: string, report: ForensicReport, problemDescription: string): string {
@@ -598,6 +778,45 @@ function saveForensicReport(basePath: string, report: ForensicReport, problemDes
   if (report.crashLock) {
     sections.push(`## Crash Lock`, ``);
     sections.push(redact(formatCrashInfo(report.crashLock)), ``);
+  }
+
+  // Activity log metadata
+  if (report.activityLogMeta) {
+    const meta = report.activityLogMeta;
+    sections.push(`## Activity Log Metadata`, ``);
+    sections.push(`- Files: ${meta.fileCount}`);
+    sections.push(`- Total size: ${(meta.totalSizeBytes / 1024).toFixed(1)} KB`);
+    if (meta.oldestFile) sections.push(`- Oldest: ${meta.oldestFile}`);
+    if (meta.newestFile) sections.push(`- Newest: ${meta.newestFile}`);
+    sections.push(``);
+  }
+
+  // Journal summary
+  if (report.journalSummary) {
+    const js = report.journalSummary;
+    sections.push(`## Journal Summary`, ``);
+    sections.push(`- Total entries: ${js.totalEntries}`);
+    sections.push(`- Distinct flows (iterations): ${js.flowCount}`);
+    sections.push(`- Daily files: ${js.fileCount}`);
+    if (js.oldestEntry) sections.push(`- Date range: ${js.oldestEntry} — ${js.newestEntry}`);
+    sections.push(``);
+    sections.push(`### Event Type Distribution`, ``);
+    sections.push(`| Event Type | Count |`);
+    sections.push(`|------------|-------|`);
+    for (const [evType, count] of Object.entries(js.eventCounts).sort((a, b) => b[1] - a[1])) {
+      sections.push(`| ${evType} | ${count} |`);
+    }
+    sections.push(``);
+    if (js.recentEvents.length > 0) {
+      sections.push(`### Recent Journal Events (last ${js.recentEvents.length})`, ``);
+      for (const ev of js.recentEvents) {
+        const parts = [`${ev.ts} [${ev.eventType}] flow=${ev.flowId.slice(0, 8)}`];
+        if (ev.rule) parts.push(`rule=${ev.rule}`);
+        if (ev.unitId) parts.push(`unit=${ev.unitId}`);
+        sections.push(`- ${parts.join(" ")}`);
+      }
+      sections.push(``);
+    }
   }
 
   writeFileSync(filePath, sections.join("\n"), "utf-8");
@@ -678,6 +897,41 @@ function formatReportForPrompt(report: ForensicReport): string {
     sections.push(`- Total cost: ${formatCost(totals.cost)}`);
     sections.push(`- Total tokens: ${formatTokenCount(totals.tokens.total)}`);
     sections.push(`- Total duration: ${formatDuration(totals.duration)}`);
+    sections.push("");
+  }
+
+  // Activity log metadata
+  if (report.activityLogMeta) {
+    const meta = report.activityLogMeta;
+    sections.push("### Activity Log Overview");
+    sections.push(`- Files: ${meta.fileCount}, Total size: ${(meta.totalSizeBytes / 1024).toFixed(1)} KB`);
+    if (meta.oldestFile) sections.push(`- Oldest: ${meta.oldestFile}`);
+    if (meta.newestFile) sections.push(`- Newest: ${meta.newestFile}`);
+    sections.push("");
+  }
+
+  // Journal summary — structured event timeline
+  if (report.journalSummary) {
+    const js = report.journalSummary;
+    sections.push("### Journal Summary (Iteration Event Log)");
+    sections.push(`- Total entries: ${js.totalEntries}, Distinct flows: ${js.flowCount}, Daily files: ${js.fileCount}`);
+    if (js.oldestEntry) sections.push(`- Date range: ${js.oldestEntry} — ${js.newestEntry}`);
+
+    // Event type distribution (compact)
+    const eventPairs = Object.entries(js.eventCounts).sort((a, b) => b[1] - a[1]);
+    sections.push(`- Events: ${eventPairs.map(([t, c]) => `${t}(${c})`).join(", ")}`);
+
+    // Recent events timeline (for tracing what just happened)
+    if (js.recentEvents.length > 0) {
+      sections.push("");
+      sections.push(`**Recent Journal Events (last ${js.recentEvents.length}):**`);
+      for (const ev of js.recentEvents) {
+        const parts = [`${ev.ts} [${ev.eventType}] flow=${ev.flowId.slice(0, 8)}`];
+        if (ev.rule) parts.push(`rule=${ev.rule}`);
+        if (ev.unitId) parts.push(`unit=${ev.unitId}`);
+        sections.push(`- ${parts.join(" ")}`);
+      }
+    }
     sections.push("");
   }
 
