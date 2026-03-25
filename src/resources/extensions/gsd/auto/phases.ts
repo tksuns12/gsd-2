@@ -27,6 +27,7 @@ import { debugLog } from "../debug-logger.js";
 import { gsdRoot } from "../paths.js";
 import { atomicWriteSync } from "../atomic-write.js";
 import { PROJECT_FILES } from "../detection.js";
+import { MergeConflictError } from "../git-service.js";
 import { join } from "node:path";
 import { existsSync, cpSync } from "node:fs";
 
@@ -234,7 +235,20 @@ export async function runPreDispatch(
     loopState.stuckRecoveryAttempts = 0;
 
     // Worktree lifecycle on milestone transition — merge current, enter next
-    deps.resolver.mergeAndExit(s.currentMilestoneId!, ctx.ui);
+    try {
+      deps.resolver.mergeAndExit(s.currentMilestoneId!, ctx.ui);
+    } catch (mergeErr) {
+      if (mergeErr instanceof MergeConflictError) {
+        // Real code conflicts — stop the loop instead of retrying forever (#2330)
+        ctx.ui.notify(
+          `Merge conflict: ${mergeErr.conflictedFiles.join(", ")}. Resolve conflicts manually and run /gsd auto to resume.`,
+          "error",
+        );
+        await deps.stopAuto(ctx, pi, `Merge conflict on milestone ${s.currentMilestoneId}`);
+        return { action: "break", reason: "merge-conflict" };
+      }
+      // Non-conflict errors — log and continue
+    }
 
     // PR creation (auto_pr) is handled inside mergeMilestoneToMain (#2302)
 
@@ -315,7 +329,18 @@ export async function runPreDispatch(
     if (incomplete.length === 0 && state.registry.length > 0) {
       // All milestones complete — merge milestone branch before stopping
       if (s.currentMilestoneId) {
-        deps.resolver.mergeAndExit(s.currentMilestoneId, ctx.ui);
+        try {
+          deps.resolver.mergeAndExit(s.currentMilestoneId, ctx.ui);
+        } catch (mergeErr) {
+          if (mergeErr instanceof MergeConflictError) {
+            ctx.ui.notify(
+              `Merge conflict: ${mergeErr.conflictedFiles.join(", ")}. Resolve conflicts manually and run /gsd auto to resume.`,
+              "error",
+            );
+            await deps.stopAuto(ctx, pi, `Merge conflict on milestone ${s.currentMilestoneId}`);
+            return { action: "break", reason: "merge-conflict" };
+          }
+        }
 
         // PR creation (auto_pr) is handled inside mergeMilestoneToMain (#2302)
       }
@@ -399,7 +424,18 @@ export async function runPreDispatch(
   if (state.phase === "complete") {
     // Milestone merge on complete (before closeout so branch state is clean)
     if (s.currentMilestoneId) {
-      deps.resolver.mergeAndExit(s.currentMilestoneId, ctx.ui);
+      try {
+        deps.resolver.mergeAndExit(s.currentMilestoneId, ctx.ui);
+      } catch (mergeErr) {
+        if (mergeErr instanceof MergeConflictError) {
+          ctx.ui.notify(
+            `Merge conflict: ${mergeErr.conflictedFiles.join(", ")}. Resolve conflicts manually and run /gsd auto to resume.`,
+            "error",
+          );
+          await deps.stopAuto(ctx, pi, `Merge conflict on milestone ${s.currentMilestoneId}`);
+          return { action: "break", reason: "merge-conflict" };
+        }
+      }
 
       // PR creation (auto_pr) is handled inside mergeMilestoneToMain (#2302)
     }
