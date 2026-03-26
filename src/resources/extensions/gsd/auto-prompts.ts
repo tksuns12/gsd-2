@@ -419,9 +419,17 @@ function resolvePreferredSkillNames(
     .map(skill => normalizeSkillReference(skill.name));
 }
 
+/** Skill names must be lowercase alphanumeric with hyphens — reject anything else
+ *  to prevent prompt injection via crafted directory names. */
+const SAFE_SKILL_NAME = /^[a-z0-9][a-z0-9-]*$/;
+
 function formatSkillActivationBlock(skillNames: string[]): string {
-  if (skillNames.length === 0) return "";
-  const calls = skillNames.map(name => `Call Skill('${name}')`).join('. ');
+  const safe = skillNames.filter(name => SAFE_SKILL_NAME.test(name));
+  if (safe.length === 0) return "";
+  // Use explicit parameter syntax so LLMs pass { skill: "..." } instead of { name: "..." }.
+  // The function-call-like syntax `Skill('name')` led LLMs to infer a positional
+  // parameter name, causing tool validation failures — see #2224.
+  const calls = safe.map(name => `Call Skill({ skill: '${name}' })`).join('. ');
   return `<skill_activation>${calls}.</skill_activation>`;
 }
 
