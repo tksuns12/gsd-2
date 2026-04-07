@@ -130,6 +130,32 @@ export function setRewriteCount(basePath: string, count: number): void {
   writeFileSync(filePath, JSON.stringify({ count, updatedAt: new Date().toISOString() }) + "\n");
 }
 
+// ─── Run-UAT dispatch counter (per-slice) ────────────────────────────────
+// Caps run-uat dispatches to prevent infinite replay when verification
+// commands fail before writing a verdict (#3624).
+const MAX_UAT_ATTEMPTS = 3;
+
+function uatCountPath(basePath: string, mid: string, sid: string): string {
+  return join(gsdRoot(basePath), "runtime", `uat-count-${mid}-${sid}.json`);
+}
+
+export function getUatCount(basePath: string, mid: string, sid: string): number {
+  try {
+    const data = JSON.parse(readFileSync(uatCountPath(basePath, mid, sid), "utf-8"));
+    return typeof data.count === "number" ? data.count : 0;
+  } catch {
+    return 0;
+  }
+}
+
+export function incrementUatCount(basePath: string, mid: string, sid: string): number {
+  const count = getUatCount(basePath, mid, sid) + 1;
+  const filePath = uatCountPath(basePath, mid, sid);
+  mkdirSync(join(gsdRoot(basePath), "runtime"), { recursive: true });
+  writeFileSync(filePath, JSON.stringify({ count, updatedAt: new Date().toISOString() }) + "\n");
+  return count;
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────────────
 
 /**
@@ -203,6 +229,16 @@ export const DISPATCH_RULES: DispatchRule[] = [
       const needsRunUat = await checkNeedsRunUat(basePath, mid, state, prefs);
       if (!needsRunUat) return null;
       const { sliceId, uatType } = needsRunUat;
+
+      // Cap run-uat dispatch attempts to prevent infinite replay (#3624)
+      const attempts = incrementUatCount(basePath, mid, sliceId);
+      if (attempts > MAX_UAT_ATTEMPTS) {
+        return {
+          action: "stop" as const,
+          reason: `run-uat for ${mid}/${sliceId} has been dispatched ${attempts - 1} times without producing a verdict. Verification commands may be broken — fix the UAT spec or manually write an ASSESSMENT verdict.`,
+          level: "warning" as const,
+        };
+      }
       const uatFile = resolveSliceFile(basePath, mid, sliceId, "UAT")!;
       const uatContent = await loadFile(uatFile);
       return {
