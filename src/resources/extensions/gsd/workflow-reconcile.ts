@@ -433,6 +433,14 @@ function _reconcileWorktreeLogsInner(
   const merged = indexed.map(({ e }) => e);
 
   // Step 7: Write merged event log FIRST (so crash recovery can re-derive DB state)
+  // Guard: detect concurrent appendEvent calls between our read (step 1) and
+  // this rewrite. If the log grew, re-read and retry to avoid dropping events.
+  const preWriteEvents = readEvents(mainLogPath);
+  if (preWriteEvents.length > mainEvents.length) {
+    logWarning("reconcile", `Event log grew during reconcile (${mainEvents.length} → ${preWriteEvents.length}), retrying with fresh read`);
+    return _reconcileWorktreeLogsInner(mainBasePath, worktreeBasePath);
+  }
+
   const baseEvents = mainEvents.slice(0, forkPoint + 1);
   const mergedLog = baseEvents.concat(merged);
   const logContent = mergedLog.map((e) => JSON.stringify(e)).join("\n") + (mergedLog.length > 0 ? "\n" : "");
