@@ -261,7 +261,8 @@ export async function inlineGsdRootFile(
 
 /**
  * Inline decisions with optional milestone scoping from the DB.
- * Falls back to filesystem via inlineGsdRootFile when DB unavailable or empty.
+ * Falls back to filesystem via inlineGsdRootFile only when DB is unavailable.
+ * When DB is available but cascade returns empty, returns null (empty is intentional per D020).
  */
 export async function inlineDecisionsFromDb(
   base: string, milestoneId?: string, scope?: string, level?: InlineLevel,
@@ -279,26 +280,29 @@ export async function inlineDecisionsFromDb(
           : formatDecisionsForPrompt(decisions);
         return `### Decisions\nSource: \`.gsd/DECISIONS.md\`\n\n${formatted}`;
       }
+      // DB available but empty result — intentional per D020, don't fall back to file
+      return null;
     }
   } catch (err) {
     logWarning("prompt", `inlineDecisionsFromDb failed: ${err instanceof Error ? err.message : String(err)}`);
   }
+  // DB unavailable — fall back to filesystem
   return inlineGsdRootFile(base, "decisions.md", "Decisions");
 }
 
 /**
- * Inline requirements with optional slice scoping from the DB.
+ * Inline requirements with optional milestone and slice scoping from the DB.
  * Falls back to filesystem via inlineGsdRootFile when DB unavailable or empty.
  */
 export async function inlineRequirementsFromDb(
-  base: string, sliceId?: string, level?: InlineLevel,
+  base: string, milestoneId?: string, sliceId?: string, level?: InlineLevel,
 ): Promise<string | null> {
   const inlineLevel = level ?? resolveInlineLevel();
   try {
     const { isDbAvailable } = await import("./gsd-db.js");
     if (isDbAvailable()) {
       const { queryRequirements, formatRequirementsForPrompt } = await import("./context-store.js");
-      const requirements = queryRequirements({ sliceId });
+      const requirements = queryRequirements({ milestoneId, sliceId });
       if (requirements.length > 0) {
         // Use compact format for non-full levels to save ~40% tokens
         const formatted = inlineLevel !== "full"
@@ -333,6 +337,73 @@ export async function inlineProjectFromDb(
     logWarning("prompt", `inlineProjectFromDb failed: ${err instanceof Error ? err.message : String(err)}`);
   }
   return inlineGsdRootFile(base, "project.md", "Project");
+}
+
+// ─── Stopwords for keyword extraction ─────────────────────────────────────
+const STOPWORDS = new Set(['of', 'the', 'and', 'a', 'for', '+', '-', 'to', 'in', 'on', 'with', 'is', 'as', 'by']);
+
+/**
+ * Extract keywords from a slice title for scoped knowledge queries.
+ * Splits on whitespace, filters stopwords, lowercases.
+ * Example: 'KNOWLEDGE scoping + roadmap excerpt' → ['knowledge', 'scoping', 'roadmap', 'excerpt']
+ */
+function extractKeywords(title: string): string[] {
+  return title
+    .split(/\s+/)
+    .map(w => w.toLowerCase().replace(/[^a-z0-9]/g, ''))
+    .filter(w => w.length > 0 && !STOPWORDS.has(w));
+}
+
+/**
+ * Inline scoped KNOWLEDGE.md content based on keywords from slice title.
+ * Reads KNOWLEDGE.md, filters to sections matching keywords, formats with header.
+ * Returns null if no KNOWLEDGE.md exists or no sections match.
+ */
+export async function inlineKnowledgeScoped(
+  base: string,
+  keywords: string[],
+): Promise<string | null> {
+  const knowledgePath = resolveGsdRootFile(base, "KNOWLEDGE");
+  if (!existsSync(knowledgePath)) return null;
+
+  const content = await loadFile(knowledgePath);
+  if (!content) return null;
+
+  // Import queryKnowledge from context-store
+  const { queryKnowledge } = await import("./context-store.js");
+  const scoped = await queryKnowledge(content, keywords);
+
+  // Return null if no sections matched (empty string from queryKnowledge)
+  if (!scoped) return null;
+
+  return `### Project Knowledge (scoped)\nSource: \`${relGsdRootFile("KNOWLEDGE")}\`\n\n${scoped.trim()}`;
+}
+
+/**
+ * Inline a roadmap excerpt for a specific slice.
+ * Reads full roadmap, extracts minimal excerpt with header + predecessor + target row.
+ * Returns null if roadmap doesn't exist or slice not found.
+ */
+export async function inlineRoadmapExcerpt(
+  base: string,
+  mid: string,
+  sid: string,
+): Promise<string | null> {
+  const roadmapPath = resolveMilestoneFile(base, mid, "ROADMAP");
+  if (!roadmapPath || !existsSync(roadmapPath)) return null;
+
+  const roadmapRel = relMilestoneFile(base, mid, "ROADMAP");
+  const content = await loadFile(roadmapPath);
+  if (!content) return null;
+
+  // Import formatRoadmapExcerpt from context-store
+  const { formatRoadmapExcerpt } = await import("./context-store.js");
+  const excerpt = formatRoadmapExcerpt(content, sid, roadmapRel);
+
+  // Return null if slice not found in roadmap
+  if (!excerpt) return null;
+
+  return `### Milestone Roadmap (excerpt)\nSource: \`${roadmapRel}\`\n\n${excerpt}`;
 }
 
 // ─── Skill Activation & Discovery ─────────────────────────────────────────
@@ -880,7 +951,7 @@ export async function buildResearchMilestonePrompt(mid: string, midTitle: string
   inlined.push(await inlineFile(contextPath, contextRel, "Milestone Context"));
   const projectInline = await inlineProjectFromDb(base);
   if (projectInline) inlined.push(projectInline);
-  const requirementsInline = await inlineRequirementsFromDb(base);
+  const requirementsInline = await inlineRequirementsFromDb(base, mid);
   if (requirementsInline) inlined.push(requirementsInline);
   const decisionsInline = await inlineDecisionsFromDb(base, mid);
   if (decisionsInline) inlined.push(decisionsInline);
@@ -930,7 +1001,7 @@ export async function buildPlanMilestonePrompt(mid: string, midTitle: string, ba
   if (inlineLevel !== "minimal") {
     const projectInline = await inlineProjectFromDb(base);
     if (projectInline) inlined.push(projectInline);
-    const requirementsInline = await inlineRequirementsFromDb(base, undefined, inlineLevel);
+    const requirementsInline = await inlineRequirementsFromDb(base, mid, undefined, inlineLevel);
     if (requirementsInline) inlined.push(requirementsInline);
     const decisionsInline = await inlineDecisionsFromDb(base, mid, undefined, inlineLevel);
     if (decisionsInline) inlined.push(decisionsInline);
@@ -999,7 +1070,16 @@ export async function buildResearchSlicePrompt(
   const sliceContextRel = relSliceFile(base, mid, sid, "CONTEXT");
 
   const inlined: string[] = [];
-  inlined.push(await inlineFile(roadmapPath, roadmapRel, "Milestone Roadmap"));
+
+  // Use roadmap excerpt instead of full roadmap for context reduction
+  const roadmapExcerptRS = await inlineRoadmapExcerpt(base, mid, sid);
+  if (roadmapExcerptRS) {
+    inlined.push(roadmapExcerptRS);
+  } else {
+    // Fall back to full roadmap if excerpt fails
+    inlined.push(await inlineFile(roadmapPath, roadmapRel, "Milestone Roadmap"));
+  }
+
   const contextInline = await inlineFileOptional(contextPath, contextRel, "Milestone Context");
   if (contextInline) inlined.push(contextInline);
   const sliceCtxInline = await inlineFileOptional(sliceContextPath, sliceContextRel, "Slice Context (from discussion)");
@@ -1008,10 +1088,14 @@ export async function buildResearchSlicePrompt(
   if (researchInline) inlined.push(researchInline);
   const decisionsInline = await inlineDecisionsFromDb(base, mid);
   if (decisionsInline) inlined.push(decisionsInline);
-  const requirementsInline = await inlineRequirementsFromDb(base, sid);
+  const requirementsInline = await inlineRequirementsFromDb(base, mid, sid);
   if (requirementsInline) inlined.push(requirementsInline);
-  const knowledgeInlineRS = await inlineGsdRootFile(base, "knowledge.md", "Project Knowledge");
+
+  // Use scoped knowledge based on slice title keywords
+  const keywords = extractKeywords(sTitle);
+  const knowledgeInlineRS = await inlineKnowledgeScoped(base, keywords);
   if (knowledgeInlineRS) inlined.push(knowledgeInlineRS);
+
   inlined.push(inlineTemplate("research", "Research"));
 
   const depContent = await inlineDependencySummaries(mid, sid, base);
@@ -1060,7 +1144,15 @@ export async function buildPlanSlicePrompt(
   const researchSliceAnchor = readPhaseAnchor(base, mid, "research-slice");
   if (researchSliceAnchor) inlined.push(formatAnchorForPrompt(researchSliceAnchor));
 
-  inlined.push(await inlineFile(roadmapPath, roadmapRel, "Milestone Roadmap"));
+  // Use roadmap excerpt instead of full roadmap for context reduction
+  const roadmapExcerptPS = await inlineRoadmapExcerpt(base, mid, sid);
+  if (roadmapExcerptPS) {
+    inlined.push(roadmapExcerptPS);
+  } else {
+    // Fall back to full roadmap if excerpt fails
+    inlined.push(await inlineFile(roadmapPath, roadmapRel, "Milestone Roadmap"));
+  }
+
   const sliceCtxInline = await inlineFileOptional(sliceContextPath, sliceContextRel, "Slice Context (from discussion)");
   if (sliceCtxInline) inlined.push(sliceCtxInline);
   const researchInline = await inlineFileOptional(researchPath, researchRel, "Slice Research");
@@ -1068,11 +1160,15 @@ export async function buildPlanSlicePrompt(
   if (inlineLevel !== "minimal") {
     const decisionsInline = await inlineDecisionsFromDb(base, mid, undefined, inlineLevel);
     if (decisionsInline) inlined.push(decisionsInline);
-    const requirementsInline = await inlineRequirementsFromDb(base, sid, inlineLevel);
+    const requirementsInline = await inlineRequirementsFromDb(base, mid, sid, inlineLevel);
     if (requirementsInline) inlined.push(requirementsInline);
   }
-  const knowledgeInlinePS = await inlineGsdRootFile(base, "knowledge.md", "Project Knowledge");
+
+  // Use scoped knowledge based on slice title keywords
+  const keywordsPS = extractKeywords(sTitle);
+  const knowledgeInlinePS = await inlineKnowledgeScoped(base, keywordsPS);
   if (knowledgeInlinePS) inlined.push(knowledgeInlinePS);
+
   inlined.push(inlineTemplate("plan", "Slice Plan"));
   if (inlineLevel === "full") {
     inlined.push(inlineTemplate("task-plan", "Task Plan"));
@@ -1272,7 +1368,7 @@ export async function buildCompleteSlicePrompt(
   if (sliceCtxInline) inlined.push(sliceCtxInline);
   inlined.push(await inlineFile(slicePlanPath, slicePlanRel, "Slice Plan"));
   if (inlineLevel !== "minimal") {
-    const requirementsInline = await inlineRequirementsFromDb(base, sid, inlineLevel);
+    const requirementsInline = await inlineRequirementsFromDb(base, mid, sid, inlineLevel);
     if (requirementsInline) inlined.push(requirementsInline);
   }
   const knowledgeInlineCS = await inlineGsdRootFile(base, "knowledge.md", "Project Knowledge");
@@ -1355,7 +1451,7 @@ export async function buildCompleteMilestonePrompt(
 
   // Inline root GSD files (skip for minimal — completion can read these if needed)
   if (inlineLevel !== "minimal") {
-    const requirementsInline = await inlineRequirementsFromDb(base, undefined, inlineLevel);
+    const requirementsInline = await inlineRequirementsFromDb(base, mid, undefined, inlineLevel);
     if (requirementsInline) inlined.push(requirementsInline);
     const decisionsInline = await inlineDecisionsFromDb(base, mid, undefined, inlineLevel);
     if (decisionsInline) inlined.push(decisionsInline);
@@ -1480,7 +1576,7 @@ export async function buildValidateMilestonePrompt(
 
   // Inline root GSD files
   if (inlineLevel !== "minimal") {
-    const requirementsInline = await inlineRequirementsFromDb(base, undefined, inlineLevel);
+    const requirementsInline = await inlineRequirementsFromDb(base, mid, undefined, inlineLevel);
     if (requirementsInline) inlined.push(requirementsInline);
     const decisionsInline = await inlineDecisionsFromDb(base, mid, undefined, inlineLevel);
     if (decisionsInline) inlined.push(decisionsInline);
@@ -1656,7 +1752,7 @@ export async function buildReassessRoadmapPrompt(
   if (inlineLevel !== "minimal") {
     const projectInline = await inlineProjectFromDb(base);
     if (projectInline) inlined.push(projectInline);
-    const requirementsInline = await inlineRequirementsFromDb(base, undefined, inlineLevel);
+    const requirementsInline = await inlineRequirementsFromDb(base, mid, undefined, inlineLevel);
     if (requirementsInline) inlined.push(requirementsInline);
     const decisionsInline = await inlineDecisionsFromDb(base, mid, undefined, inlineLevel);
     if (decisionsInline) inlined.push(decisionsInline);
