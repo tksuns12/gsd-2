@@ -240,7 +240,7 @@ test("transport compatibility now allows complete-milestone over workflow MCP su
   assert.equal(error, null);
 });
 
-test("transport compatibility still blocks units whose MCP tools are not exposed", () => {
+test("transport compatibility now allows replan-slice over workflow MCP surface", () => {
   const error = getWorkflowTransportSupportError(
     "claude-code",
     ["gsd_replan_slice"],
@@ -254,7 +254,24 @@ test("transport compatibility still blocks units whose MCP tools are not exposed
     },
   );
 
-  assert.match(error ?? "", /requires gsd_replan_slice/);
+  assert.equal(error, null);
+});
+
+test("transport compatibility still blocks units whose MCP tools are not exposed", () => {
+  const error = getWorkflowTransportSupportError(
+    "claude-code",
+    ["gsd_skip_slice"],
+    {
+      projectRoot: "/tmp/project",
+      env: { GSD_WORKFLOW_MCP_COMMAND: "node" },
+      surface: "auto-mode",
+      unitType: "skip-slice",
+      authMode: "externalCli",
+      baseUrl: "local://claude-code",
+    },
+  );
+
+  assert.match(error ?? "", /requires gsd_skip_slice/);
   assert.match(error ?? "", /currently exposes only/);
 });
 

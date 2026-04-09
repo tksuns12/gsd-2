@@ -13,15 +13,16 @@ import {
 } from "../gsd-db.ts";
 import {
   executeCompleteMilestone,
-  executeValidateMilestone,
+  executePlanMilestone,
+  executePlanSlice,
+  executeReplanSlice,
   executeReassessRoadmap,
   executeSaveGateResult,
   executeSummarySave,
   executeTaskComplete,
   executeMilestoneStatus,
-  executePlanMilestone,
-  executePlanSlice,
   executeSliceComplete,
+  executeValidateMilestone,
 } from "../tools/workflow-tool-executors.ts";
 
 function makeTmpBase(): string {
@@ -500,6 +501,119 @@ test("executeSaveGateResult validates inputs and persists verdicts", async () =>
     assert.equal(row?.status, "complete");
     assert.equal(row?.verdict, "pass");
     assert.equal(row?.rationale, "Looks good.");
+  } finally {
+    closeDatabase();
+    cleanup(base);
+  }
+});
+
+test("executeReplanSlice rewrites pending tasks and renders replan artifacts", async () => {
+  const base = makeTmpBase();
+  try {
+    openTestDb(base);
+    await inProjectDir(base, () => executePlanMilestone({
+      milestoneId: "M006",
+      title: "Milestone Six",
+      vision: "Exercise slice replanning.",
+      slices: [
+        {
+          sliceId: "S06",
+          title: "Replan slice",
+          risk: "medium",
+          depends: [],
+          demo: "Slice can be replanned after a blocker task completes.",
+          goal: "Prepare replan state.",
+          successCriteria: "PLAN and REPLAN artifacts update.",
+          proofLevel: "integration",
+          integrationClosure: "Replan shares the workflow executor path.",
+          observabilityImpact: "Executor test covers replan output files.",
+        },
+      ],
+    }, base));
+    await inProjectDir(base, () => executePlanSlice({
+      milestoneId: "M006",
+      sliceId: "S06",
+      goal: "Plan a slice that will be replanned.",
+      tasks: [
+        {
+          taskId: "T06",
+          title: "Blocker task",
+          description: "Finish the blocker-discovery task.",
+          estimate: "5m",
+          files: ["src/blocker.ts"],
+          verify: "node --test",
+          inputs: ["M006-ROADMAP.md"],
+          expectedOutput: ["T06-SUMMARY.md"],
+        },
+        {
+          taskId: "T07",
+          title: "Pending task",
+          description: "Original follow-up task.",
+          estimate: "10m",
+          files: ["src/pending.ts"],
+          verify: "node --test",
+          inputs: ["S06-PLAN.md"],
+          expectedOutput: ["Updated plan"],
+        },
+      ],
+    }, base));
+    await inProjectDir(base, () => executeTaskComplete({
+      milestoneId: "M006",
+      sliceId: "S06",
+      taskId: "T06",
+      oneLiner: "Completed blocker task",
+      narrative: "The blocker was identified and documented.",
+      verification: "node --test",
+    }, base));
+
+    const result = await inProjectDir(base, () => executeReplanSlice({
+      milestoneId: "M006",
+      sliceId: "S06",
+      blockerTaskId: "T06",
+      blockerDescription: "Original approach no longer works.",
+      whatChanged: "Adjusted the remaining tasks and added a remediation task.",
+      updatedTasks: [
+        {
+          taskId: "T07",
+          title: "Pending task (updated)",
+          description: "Updated follow-up task after replanning.",
+          estimate: "15m",
+          files: ["src/pending.ts", "src/replanned.ts"],
+          verify: "node --test",
+          inputs: ["S06-PLAN.md"],
+          expectedOutput: ["Updated plan"],
+        },
+        {
+          taskId: "T08",
+          title: "Remediation task",
+          description: "New task introduced by the replan.",
+          estimate: "20m",
+          files: ["src/remediation.ts"],
+          verify: "node --test",
+          inputs: ["S06-REPLAN.md"],
+          expectedOutput: ["Remediation patch"],
+        },
+      ],
+      removedTaskIds: [],
+    }, base));
+
+    assert.equal(result.details.operation, "replan_slice");
+    const planPath = String(result.details.planPath);
+    const replanPath = String(result.details.replanPath);
+    assert.ok(existsSync(planPath), "replanned plan should exist on disk");
+    assert.ok(existsSync(replanPath), "replan artifact should exist on disk");
+    assert.match(readFileSync(planPath, "utf-8"), /T08/);
+    assert.match(readFileSync(replanPath, "utf-8"), /Adjusted the remaining tasks/);
+
+    const db = _getAdapter();
+    const updatedTask = db!.prepare(
+      "SELECT title FROM tasks WHERE milestone_id = ? AND slice_id = ? AND id = ?",
+    ).get("M006", "S06", "T07") as Record<string, unknown> | undefined;
+    const insertedTask = db!.prepare(
+      "SELECT title FROM tasks WHERE milestone_id = ? AND slice_id = ? AND id = ?",
+    ).get("M006", "S06", "T08") as Record<string, unknown> | undefined;
+    assert.equal(updatedTask?.title, "Pending task (updated)");
+    assert.equal(insertedTask?.title, "Remediation task");
   } finally {
     closeDatabase();
     cleanup(base);

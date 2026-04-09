@@ -12,6 +12,7 @@ import {
   executeCompleteMilestone,
   executePlanMilestone,
   executePlanSlice,
+  executeReplanSlice,
   executeReassessRoadmap,
   executeSaveGateResult,
   executeSliceComplete,
@@ -916,40 +917,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
   // ─── gsd_replan_slice (gsd_slice_replan alias) ─────────────────────────
 
   const replanSliceExecute = async (_toolCallId: string, params: any, _signal: AbortSignal | undefined, _onUpdate: unknown, _ctx: unknown) => {
-    const dbAvailable = await ensureDbOpen();
-    if (!dbAvailable) {
-      return {
-        content: [{ type: "text" as const, text: "Error: GSD database is not available. Cannot replan slice." }],
-        details: { operation: "replan_slice", error: "db_unavailable" } as any,
-      };
-    }
-    try {
-      const { handleReplanSlice } = await import("../tools/replan-slice.js");
-      const result = await handleReplanSlice(params, process.cwd());
-      if ("error" in result) {
-        return {
-          content: [{ type: "text" as const, text: `Error replanning slice: ${result.error}` }],
-          details: { operation: "replan_slice", error: result.error } as any,
-        };
-      }
-      return {
-        content: [{ type: "text" as const, text: `Replanned slice ${result.sliceId} (${result.milestoneId})` }],
-        details: {
-          operation: "replan_slice",
-          milestoneId: result.milestoneId,
-          sliceId: result.sliceId,
-          replanPath: result.replanPath,
-          planPath: result.planPath,
-        } as any,
-      };
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      logError("tool", `replan_slice tool failed: ${msg}`, { tool: "gsd_replan_slice", error: String(err) });
-      return {
-        content: [{ type: "text" as const, text: `Error replanning slice: ${msg}` }],
-        details: { operation: "replan_slice", error: msg } as any,
-      };
-    }
+    return executeReplanSlice(params, process.cwd());
   };
 
   const replanSliceTool = {

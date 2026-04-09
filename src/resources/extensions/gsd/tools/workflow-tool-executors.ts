@@ -18,6 +18,8 @@ import type { PlanMilestoneParams } from "./plan-milestone.js";
 import { handlePlanMilestone } from "./plan-milestone.js";
 import type { PlanSliceParams } from "./plan-slice.js";
 import { handlePlanSlice } from "./plan-slice.js";
+import type { ReplanSliceParams } from "./replan-slice.js";
+import { handleReplanSlice } from "./replan-slice.js";
 import type { ReassessRoadmapParams } from "./reassess-roadmap.js";
 import { handleReassessRoadmap } from "./reassess-roadmap.js";
 import type { ValidateMilestoneParams } from "./validate-milestone.js";
@@ -137,6 +139,7 @@ export type CompleteMilestoneExecutorParams = Partial<CompleteMilestoneParams> &
 export type SliceCompleteExecutorParams = CompleteSliceParams;
 export type PlanMilestoneExecutorParams = PlanMilestoneParams;
 export type PlanSliceExecutorParams = PlanSliceParams;
+export type ReplanSliceExecutorParams = ReplanSliceParams;
 export type ValidateMilestoneExecutorParams = ValidateMilestoneParams;
 export type ReassessRoadmapExecutorParams = ReassessRoadmapParams;
 
@@ -514,6 +517,45 @@ export async function executePlanSlice(
     return {
       content: [{ type: "text", text: `Error planning slice: ${msg}` }],
       details: { operation: "plan_slice", error: msg },
+    };
+  }
+}
+
+export async function executeReplanSlice(
+  params: ReplanSliceExecutorParams,
+  basePath: string = process.cwd(),
+): Promise<ToolExecutionResult> {
+  const dbAvailable = await ensureDbOpen();
+  if (!dbAvailable) {
+    return {
+      content: [{ type: "text", text: "Error: GSD database is not available. Cannot replan slice." }],
+      details: { operation: "replan_slice", error: "db_unavailable" },
+    };
+  }
+  try {
+    const result = await handleReplanSlice(params, basePath);
+    if ("error" in result) {
+      return {
+        content: [{ type: "text", text: `Error replanning slice: ${result.error}` }],
+        details: { operation: "replan_slice", error: result.error },
+      };
+    }
+    return {
+      content: [{ type: "text", text: `Replanned slice ${result.sliceId} (${result.milestoneId})` }],
+      details: {
+        operation: "replan_slice",
+        milestoneId: result.milestoneId,
+        sliceId: result.sliceId,
+        replanPath: result.replanPath,
+        planPath: result.planPath,
+      },
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logError("tool", `replan_slice tool failed: ${msg}`, { tool: "gsd_replan_slice", error: String(err) });
+    return {
+      content: [{ type: "text", text: `Error replanning slice: ${msg}` }],
+      details: { operation: "replan_slice", error: msg },
     };
   }
 }

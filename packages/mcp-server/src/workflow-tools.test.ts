@@ -48,16 +48,18 @@ function makeMockServer() {
 }
 
 describe("workflow MCP tools", () => {
-  it("registers the fifteen workflow tools", () => {
+  it("registers the seventeen workflow tools", () => {
     const server = makeMockServer();
     registerWorkflowTools(server as any);
 
-    assert.equal(server.tools.length, 15);
+    assert.equal(server.tools.length, 17);
     assert.deepEqual(
       server.tools.map((t) => t.name),
       [
         "gsd_plan_milestone",
         "gsd_plan_slice",
+        "gsd_replan_slice",
+        "gsd_slice_replan",
         "gsd_slice_complete",
         "gsd_complete_slice",
         "gsd_complete_milestone",
@@ -240,6 +242,152 @@ describe("workflow MCP tools", () => {
         existsSync(join(base, ".gsd", "milestones", "M001", "slices", "S01", "tasks", "T01-PLAN.md")),
         "task plan should exist on disk",
       );
+    } finally {
+      cleanup(base);
+    }
+  });
+
+  it("gsd_replan_slice and gsd_slice_replan work end-to-end", async () => {
+    const base = makeTmpBase();
+    try {
+      const server = makeMockServer();
+      registerWorkflowTools(server as any);
+      const milestoneTool = server.tools.find((t) => t.name === "gsd_plan_milestone");
+      const sliceTool = server.tools.find((t) => t.name === "gsd_plan_slice");
+      const taskTool = server.tools.find((t) => t.name === "gsd_task_complete");
+      const canonicalTool = server.tools.find((t) => t.name === "gsd_replan_slice");
+      const aliasTool = server.tools.find((t) => t.name === "gsd_slice_replan");
+      assert.ok(milestoneTool, "milestone planning tool should be registered");
+      assert.ok(sliceTool, "slice planning tool should be registered");
+      assert.ok(taskTool, "task completion tool should be registered");
+      assert.ok(canonicalTool, "slice replanning tool should be registered");
+      assert.ok(aliasTool, "slice replanning alias should be registered");
+
+      await milestoneTool!.handler({
+        projectDir: base,
+        milestoneId: "M099",
+        title: "Slice replanning",
+        vision: "Drive replan parity over MCP.",
+        slices: [
+          {
+            sliceId: "S09",
+            title: "Replan slice",
+            risk: "medium",
+            depends: [],
+            demo: "Slice replans after a blocker task completes.",
+            goal: "Prepare replan state.",
+            successCriteria: "Plan and replan artifacts update over MCP.",
+            proofLevel: "integration",
+            integrationClosure: "Replan uses the shared executor path.",
+            observabilityImpact: "Tests cover replan artifacts.",
+          },
+        ],
+      });
+      await sliceTool!.handler({
+        projectDir: base,
+        milestoneId: "M099",
+        sliceId: "S09",
+        goal: "Plan a slice that will be replanned.",
+        tasks: [
+          {
+            taskId: "T09",
+            title: "Blocker task",
+            description: "Finish the blocker-discovery task.",
+            estimate: "5m",
+            files: ["src/blocker.ts"],
+            verify: "node --test",
+            inputs: ["M099-ROADMAP.md"],
+            expectedOutput: ["T09-SUMMARY.md"],
+          },
+          {
+            taskId: "T10",
+            title: "Pending task",
+            description: "Original follow-up task.",
+            estimate: "10m",
+            files: ["src/pending.ts"],
+            verify: "node --test",
+            inputs: ["S09-PLAN.md"],
+            expectedOutput: ["Updated plan"],
+          },
+        ],
+      });
+      await taskTool!.handler({
+        projectDir: base,
+        milestoneId: "M099",
+        sliceId: "S09",
+        taskId: "T09",
+        oneLiner: "Completed blocker task",
+        narrative: "Prepared the slice for replanning.",
+        verification: "node --test",
+      });
+
+      const canonicalResult = await canonicalTool!.handler({
+        projectDir: base,
+        milestoneId: "M099",
+        sliceId: "S09",
+        blockerTaskId: "T09",
+        blockerDescription: "Original approach is no longer viable.",
+        whatChanged: "Updated the remaining task and added remediation work.",
+        updatedTasks: [
+          {
+            taskId: "T10",
+            title: "Pending task (updated)",
+            description: "Updated follow-up task after replanning.",
+            estimate: "15m",
+            files: ["src/pending.ts", "src/replanned.ts"],
+            verify: "node --test",
+            inputs: ["S09-PLAN.md"],
+            expectedOutput: ["Updated plan"],
+          },
+          {
+            taskId: "T11",
+            title: "Remediation task",
+            description: "New task introduced by the replan.",
+            estimate: "20m",
+            files: ["src/remediation.ts"],
+            verify: "node --test",
+            inputs: ["S09-REPLAN.md"],
+            expectedOutput: ["Remediation patch"],
+          },
+        ],
+        removedTaskIds: [],
+      });
+      assert.match((canonicalResult as any).content[0].text as string, /Replanned slice S09/);
+
+      const aliasResult = await aliasTool!.handler({
+        projectDir: base,
+        milestoneId: "M099",
+        sliceId: "S09",
+        blockerTaskId: "T09",
+        blockerDescription: "Alias path confirms the same replan flow.",
+        whatChanged: "Removed the remediation task after the alias check.",
+        updatedTasks: [
+          {
+            taskId: "T10",
+            title: "Pending task (updated again)",
+            description: "Alias adjusted the remaining pending task.",
+            estimate: "12m",
+            files: ["src/pending.ts"],
+            verify: "node --test",
+            inputs: ["S09-PLAN.md"],
+            expectedOutput: ["Updated plan"],
+          },
+        ],
+        removedTaskIds: ["T11"],
+      });
+      assert.match((aliasResult as any).content[0].text as string, /Replanned slice S09/);
+      assert.ok(
+        existsSync(join(base, ".gsd", "milestones", "M099", "slices", "S09", "S09-REPLAN.md")),
+        "replan artifact should exist on disk",
+      );
+      assert.ok(
+        existsSync(join(base, ".gsd", "milestones", "M099", "slices", "S09", "S09-PLAN.md")),
+        "updated plan should exist on disk",
+      );
+      const removedTask = _getAdapter()!.prepare(
+        "SELECT id FROM tasks WHERE milestone_id = ? AND slice_id = ? AND id = ?",
+      ).get("M099", "S09", "T11");
+      assert.equal(removedTask, undefined, "alias should remove the replanned task");
     } finally {
       cleanup(base);
     }

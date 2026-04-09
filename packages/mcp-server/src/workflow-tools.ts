@@ -64,6 +64,28 @@ type WorkflowToolExecutors = {
     },
     basePath?: string,
   ) => Promise<unknown>;
+  executeReplanSlice: (
+    params: {
+      milestoneId: string;
+      sliceId: string;
+      blockerTaskId: string;
+      blockerDescription: string;
+      whatChanged: string;
+      updatedTasks: Array<{
+        taskId: string;
+        title: string;
+        description: string;
+        estimate: string;
+        files: string[];
+        verify: string;
+        inputs: string[];
+        expectedOutput: string[];
+        fullPlanMd?: string;
+      }>;
+      removedTaskIds: string[];
+    },
+    basePath?: string,
+  ) => Promise<unknown>;
   executeSliceComplete: (
     params: {
       sliceId: string;
@@ -287,6 +309,14 @@ async function handleSliceComplete(
   return withProjectDir(projectDir, () => executeSliceComplete(args as any, projectDir));
 }
 
+async function handleReplanSlice(
+  projectDir: string,
+  args: Record<string, unknown>,
+): Promise<unknown> {
+  const { executeReplanSlice } = await getWorkflowToolExecutors();
+  return withProjectDir(projectDir, () => executeReplanSlice(args as any, projectDir));
+}
+
 async function handleCompleteMilestone(
   projectDir: string,
   args: Record<string, unknown>,
@@ -382,6 +412,27 @@ const saveGateResultSchema = {
   findings: z.string().optional().describe("Detailed markdown findings"),
 };
 
+const replanSliceSchema = {
+  projectDir: z.string().describe("Absolute path to the project directory"),
+  milestoneId: z.string().describe("Milestone ID (e.g. M001)"),
+  sliceId: z.string().describe("Slice ID (e.g. S01)"),
+  blockerTaskId: z.string().describe("Task ID that discovered the blocker"),
+  blockerDescription: z.string().describe("Description of the blocker"),
+  whatChanged: z.string().describe("Summary of what changed in the plan"),
+  updatedTasks: z.array(z.object({
+    taskId: z.string(),
+    title: z.string(),
+    description: z.string(),
+    estimate: z.string(),
+    files: z.array(z.string()),
+    verify: z.string(),
+    inputs: z.array(z.string()),
+    expectedOutput: z.array(z.string()),
+    fullPlanMd: z.string().optional(),
+  })).describe("Tasks to upsert into the replanned slice"),
+  removedTaskIds: z.array(z.string()).describe("Task IDs to remove from the slice"),
+};
+
 export function registerWorkflowTools(server: McpToolServer): void {
   server.tool(
     "gsd_plan_milestone",
@@ -458,6 +509,26 @@ export function registerWorkflowTools(server: McpToolServer): void {
       const { projectDir, ...params } = args as { projectDir: string } & Record<string, unknown>;
       const { executePlanSlice } = await getWorkflowToolExecutors();
       return withProjectDir(projectDir, () => executePlanSlice(params as any, projectDir));
+    },
+  );
+
+  server.tool(
+    "gsd_replan_slice",
+    "Replan a slice after a blocker is discovered, preserving completed tasks and re-rendering PLAN.md + REPLAN.md.",
+    replanSliceSchema,
+    async (args: Record<string, unknown>) => {
+      const { projectDir, ...replanArgs } = args as { projectDir: string } & Record<string, unknown>;
+      return handleReplanSlice(projectDir, replanArgs);
+    },
+  );
+
+  server.tool(
+    "gsd_slice_replan",
+    "Alias for gsd_replan_slice. Replan a slice after a blocker is discovered.",
+    replanSliceSchema,
+    async (args: Record<string, unknown>) => {
+      const { projectDir, ...replanArgs } = args as { projectDir: string } & Record<string, unknown>;
+      return handleReplanSlice(projectDir, replanArgs);
     },
   );
 
