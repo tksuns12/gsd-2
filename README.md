@@ -503,9 +503,8 @@ auto_report: true
 | `verification_commands`| Array of shell commands to run after task execution (e.g., `["npm run lint", "npm run test"]`)        |
 | `verification_auto_fix`| Auto-retry on verification failures (default: true)                                                   |
 | `verification_max_retries` | Max retries for verification failures (default: 2)                                               |
-| `require_slice_discussion` | Pause auto-mode before each slice for human discussion review                                    |
+| `phases.require_slice_discussion` | Pause auto-mode before each slice for human discussion review                                    |
 | `auto_report`          | Auto-generate HTML reports after milestone completion (default: true)                                 |
-| `searchExcludeDirs`    | Directories to exclude from `@` file autocomplete (e.g., `["node_modules", ".git", "dist"]`)          |
 
 ### Agent Instructions
 
@@ -570,13 +569,15 @@ GSD ships with 24 extensions, all loaded automatically:
 
 ### Bundled Agents
 
-Three specialized subagents for delegated work:
+Five specialized subagents for delegated work:
 
-| Agent          | Role                                                         |
-| -------------- | ------------------------------------------------------------ |
-| **Scout**      | Fast codebase recon — returns compressed context for handoff |
-| **Researcher** | Web research — finds and synthesizes current information     |
-| **Worker**     | General-purpose execution in an isolated context window      |
+| Agent               | Role                                                         |
+| ------------------- | ------------------------------------------------------------ |
+| **Scout**           | Fast codebase recon — returns compressed context for handoff |
+| **Researcher**      | Web research — finds and synthesizes current information     |
+| **Worker**          | General-purpose execution in an isolated context window      |
+| **JavaScript Pro**  | JavaScript-specialized execution and debugging               |
+| **TypeScript Pro**  | TypeScript-specialized execution and debugging               |
 
 ---
 
@@ -651,9 +652,8 @@ gsd (CLI binary)
           ├─ resource-loader.ts  Syncs bundled extensions + agents to ~/.gsd/agent/
           └─ src/resources/
               ├─ extensions/gsd/    Core GSD extension (auto, state, commands, ...)
-              ├─ extensions/...     23 supporting extensions
-              ├─ agents/            scout, researcher, worker
-              ├─ AGENTS.md          Agent routing instructions
+              ├─ extensions/...     21 supporting extensions
+              ├─ agents/            scout, researcher, worker, javascript-pro, typescript-pro
               └─ GSD-WORKFLOW.md    Manual bootstrap protocol
 ```
 
