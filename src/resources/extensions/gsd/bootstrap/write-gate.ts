@@ -50,10 +50,6 @@ let pendingGateId: string | null = null;
  * These appear in discuss.md (depth/requirements/roadmap).
  */
 const GATE_QUESTION_PATTERNS = [
-  "layer1_scope_gate",
-  "layer2_architecture_gate",
-  "layer3_error_gate",
-  "layer4_quality_gate",
   "depth_verification",
 ] as const;
 
