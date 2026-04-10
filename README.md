@@ -27,52 +27,43 @@ One command. Walk away. Come back to a built project with clean git history.
 
 ---
 
-## What's New in v2.67
+## What's New in v2.68
 
-### Context Engineering
+### MCP Workflow Tools
 
-- **Tiered Context Injection (M005)** — relevance-scoped context with 65%+ token reduction. Decision scope cascade derives context from slice metadata instead of blanket injection.
-- **Resilient transient error recovery** — defers to Core RetryHandler and fixes cmdCtx race conditions for more reliable auto-mode sessions.
+- **Full workflow over MCP** — slice replanning, milestone management, slice completion, task completion, and core planning tools are now exposed over MCP for external integrations.
+- **Transport-gated MCP** — workflow tool availability adapts to provider transport capabilities automatically.
+- **Write gate enforcement** — workflow MCP respects write gates, preventing unauthorized state mutations from external clients.
 
-### Provider & Model Improvements
+### Reliability & Recovery
 
-- **Anthropic subscription routing** — users with Anthropic subscriptions are automatically routed through Claude Code CLI provider with proper display names across all UI surfaces.
-- **Claude Code provider hardening** — native Windows claude lookup, fallback guards, and `out of extra usage` error matching.
-- **XML parameter recovery** — pi-ai recovers XML parameters trapped in JSON strings from providers.
+- **False degraded-mode fix** — eliminates spurious degraded-mode warnings when the DB hasn't been initialized yet.
+- **Stale session resume suppression** — prevents stale interrupted-session resume prompts from hijacking fresh sessions.
+- **Merge conflict recovery** — `autoCommitDirtyState` guarded with cwd restore on `MergeConflictError`.
+- **Auto-resume hardening** — `autoStartTime` restored on resume, managed resources resynced on auto resume.
 
-### Safety & Data Integrity
+### TUI & Developer Experience
 
-- **LLM safety harness** — auto-mode damage control prevents the LLM from running destructive operations or querying `gsd.db` directly via bash.
-- **5-wave state machine hardening** — critical data integrity fixes across atomic writes, randomized tmp paths, event log reconciliation, session recovery, and consistency enforcement. 86+ regression tests added.
-- **Discussion gate enforcement** — mechanical enforcement for discussion question gates with fail-closed behavior.
-- **Enhanced verification** — pre-execution plan verification checks, post-execution cross-task consistency checks, blocking behavior and strict mode.
-
-### Parallel Execution & Dispatch
-
-- **Slice-level parallelism** — dependency-aware parallel dispatch within a milestone, not just across milestones.
-- **Parallel research slices** — research and milestone validation run in parallel.
-- **Worker model override** — configure different models for parallel milestone workers.
-
-### TUI & Notifications
-
-- **Persistent notification panel** — TUI overlay, widget, and web API for real-time notifications.
-- **Remote questions race** — local TUI races against remote channel (Slack/Discord) instead of remote-only routing.
-- **OS-specific keyboard shortcuts** — shortcut hints now adapt to macOS/Linux/Windows.
-- **`/gsd show-config`** — inspect active configuration at a glance.
+- **Contextual tips system** — TUI and web terminal now surface contextual tips based on workflow state.
+- **Claude Code MCP streaming** — real-time streaming and tool output rendering for Claude Code MCP connections.
 
 ### Infrastructure
 
-- **Ollama native provider** — `/api/chat` provider with full option exposure, `apiKey` auth mode, and headless probe.
-- **MCP OAuth** — MCP client supports OAuth auth provider for HTTP transport.
-- **WAL-safe migration backup** — database migrations create WAL-safe backups with stronger regression tests.
-- **Xcode/xcodegen detection** — project detection now supports Xcode bundles and xcodegen.
-- **170+ bug fixes** — state machine resilience, worktree safety, prompt injection, session recovery, and more.
+- **Weekly model registry refresh** — CI workflow auto-regenerates the model registry on a weekly schedule.
+- **Codebase cache auto-refresh** — stale codebase cache is refreshed automatically without manual intervention.
 
 See the full [Changelog](./CHANGELOG.md) for details on every release.
 
 <details>
-<summary>Previous highlights (v2.63 and earlier)</summary>
+<summary>Previous highlights (v2.67 and earlier)</summary>
 
+- **Tiered Context Injection (M005)** — relevance-scoped context with 65%+ token reduction
+- **Resilient transient error recovery** — defers to Core RetryHandler and fixes cmdCtx race conditions
+- **Anthropic subscription routing** — auto-routed through Claude Code CLI provider with proper display names
+- **5-wave state machine hardening** — critical data integrity fixes across atomic writes, event log reconciliation, session recovery
+- **Discussion gate enforcement** — mechanical enforcement with fail-closed behavior
+- **Slice-level parallelism** — dependency-aware parallel dispatch within a milestone
+- **Persistent notification panel** — TUI overlay, widget, and web API for real-time notifications
 - **MCP server** — 6 read-only project state tools for external integrations, auto-wrapup guard, and question dedup
 - **Ollama extension** — first-class local LLM support via Ollama, with dynamic routing enabled by default
 - **Discord bot & daemon** — dedicated daemon package, Discord bot, and headless text mode with tool calls
