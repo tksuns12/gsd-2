@@ -101,7 +101,7 @@ describe("assertGateCoverage", () => {
 
   test("throws when a row has an unknown gate id", () => {
     assert.throws(
-      () => assertGateCoverage([{ gate_id: "Q999" }], "gate-evaluate", { requireAll: false }),
+      () => assertGateCoverage([{ gate_id: "Q999" as GateId }], "gate-evaluate", { requireAll: false }),
       (err: Error) => err.message.includes("Q999"),
     );
   });
