@@ -806,6 +806,9 @@ export async function bootstrapAutoSession(
 
     ctx.ui.setStatus("gsd-auto", s.stepMode ? "next" : "auto");
     ctx.ui.setFooter(hideFooter);
+    // Hide gsd-health during AUTO — gsd-progress is the single source of truth
+    // for last-commit / cost / health signal while auto is running.
+    ctx.ui.setWidget("gsd-health", undefined);
     const modeLabel = s.stepMode ? "Step-mode" : "Auto-mode";
     const pendingCount = (state.registry ?? []).filter(
       (m) => m.status !== "complete" && m.status !== "parked",

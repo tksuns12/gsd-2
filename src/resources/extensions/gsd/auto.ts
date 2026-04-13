@@ -199,6 +199,7 @@ import {
   postUnitPostVerification,
 } from "./auto-post-unit.js";
 import { bootstrapAutoSession, openProjectDbIfPresent, type BootstrapDeps } from "./auto-start.js";
+import { initHealthWidget } from "./health-widget.js";
 import { autoLoop, resolveAgentEnd, resolveAgentEndCancelled, _resetPendingResolve, isSessionSwitchInFlight, type LoopDeps, type ErrorContext } from "./auto-loop.js";
 // Slice-level parallelism (#2340)
 import { getEligibleSlices } from "./slice-parallel-eligibility.js";
@@ -650,6 +651,7 @@ function handleLostSessionLock(
   ctx?.ui.setStatus("gsd-auto", undefined);
   ctx?.ui.setWidget("gsd-progress", undefined);
   ctx?.ui.setFooter(undefined);
+  if (ctx) initHealthWidget(ctx);
 }
 
 /**
@@ -684,6 +686,7 @@ function cleanupAfterLoopExit(ctx: ExtensionContext): void {
     ctx.ui.setStatus("gsd-auto", undefined);
     ctx.ui.setWidget("gsd-progress", undefined);
     ctx.ui.setFooter(undefined);
+    initHealthWidget(ctx);
   }
 
   // Restore CWD out of worktree back to original project root
@@ -943,6 +946,7 @@ export async function stopAuto(
     ctx?.ui.setStatus("gsd-auto", undefined);
     ctx?.ui.setWidget("gsd-progress", undefined);
     ctx?.ui.setFooter(undefined);
+    if (ctx) initHealthWidget(ctx);
     restoreProjectRootEnv();
     restoreMilestoneLockEnv();
 
@@ -1044,6 +1048,7 @@ export async function pauseAuto(
   ctx?.ui.setStatus("gsd-auto", "paused");
   ctx?.ui.setWidget("gsd-progress", undefined);
   ctx?.ui.setFooter(undefined);
+  if (ctx) initHealthWidget(ctx);
   const resumeCmd = s.stepMode ? "/gsd next" : "/gsd auto";
   ctx?.ui.notify(
     `${s.stepMode ? "Step" : "Auto"}-mode paused (Escape). Type to interact, or ${resumeCmd} to resume.`,

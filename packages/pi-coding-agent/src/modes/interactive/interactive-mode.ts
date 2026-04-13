@@ -1402,7 +1402,9 @@ export class InteractiveMode {
 
 		// widgetContainerAbove: spacer collapses when pinned content is visible
 		// so there's no extra blank line between pinned output and the editor border.
-		this.widgetContainerAbove.clear();
+		// Use detachChildren() (not clear()) — the extensionWidgetsAbove map owns
+		// disposal; clear() would dispose every mounted widget on every re-render.
+		this.widgetContainerAbove.detachChildren();
 		const pinned = this.pinnedMessageContainer;
 		this.widgetContainerAbove.addChild({
 			render: () => pinned.children.length > 0 ? [] : [""],
@@ -1422,7 +1424,9 @@ export class InteractiveMode {
 		spacerWhenEmpty: boolean,
 		leadingSpacer: boolean,
 	): void {
-		container.clear();
+		// Detach without disposing — the widgets map owns lifecycle; disposing
+		// here would kill refresh timers and subscriptions on every re-render.
+		container.detachChildren();
 
 		if (widgets.size === 0) {
 			if (spacerWhenEmpty) {
