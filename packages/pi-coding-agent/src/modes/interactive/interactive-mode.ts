@@ -127,6 +127,45 @@ function isExpandable(obj: unknown): obj is Expandable {
 	return typeof obj === "object" && obj !== null && "setExpanded" in obj && typeof obj.setExpanded === "function";
 }
 
+export type AssistantReplaySegment =
+	| { kind: "assistant"; startIndex: number; endIndex: number }
+	| { kind: "tool"; contentIndex: number };
+
+/**
+ * Build replay segments for historical assistant messages so rebuild paths
+ * preserve the original content[] ordering between assistant prose and tools.
+ */
+export function buildAssistantReplaySegments(contentBlocks: Array<any>): AssistantReplaySegment[] {
+	const segments: AssistantReplaySegment[] = [];
+	let runStart = -1;
+
+	for (let i = 0; i < contentBlocks.length; i++) {
+		const block = contentBlocks[i];
+		const isAssistantText = block?.type === "text" || block?.type === "thinking";
+		const isTool = block?.type === "toolCall" || block?.type === "serverToolUse";
+
+		if (isAssistantText) {
+			if (runStart === -1) runStart = i;
+			continue;
+		}
+
+		if (runStart !== -1) {
+			segments.push({ kind: "assistant", startIndex: runStart, endIndex: i - 1 });
+			runStart = -1;
+		}
+
+		if (isTool) {
+			segments.push({ kind: "tool", contentIndex: i });
+		}
+	}
+
+	if (runStart !== -1) {
+		segments.push({ kind: "assistant", startIndex: runStart, endIndex: contentBlocks.length - 1 });
+	}
+
+	return segments;
+}
+
 type CompactionQueuedMessage = {
 	text: string;
 	mode: "steer" | "followUp";
@@ -2201,9 +2240,30 @@ export class InteractiveMode {
 		for (const message of sessionContext.messages) {
 			// Assistant messages need special handling for tool calls
 			if (message.role === "assistant") {
-				this.addMessageToChat(message);
-				// Render tool call components
-				for (const content of message.content) {
+				const hasToolBlocks = message.content.some((c) => c.type === "toolCall" || c.type === "serverToolUse");
+				if (!hasToolBlocks) {
+					this.addMessageToChat(message);
+					continue;
+				}
+
+				const assistantSegments: AssistantMessageComponent[] = [];
+				const replaySegments = buildAssistantReplaySegments(message.content);
+
+				for (const segment of replaySegments) {
+					if (segment.kind === "assistant") {
+						const assistantComponent = new AssistantMessageComponent(
+							message,
+							this.hideThinkingBlock,
+							this.getMarkdownThemeWithSettings(),
+							this.settingsManager.getTimestampFormat(),
+							{ startIndex: segment.startIndex, endIndex: segment.endIndex },
+						);
+						this.chatContainer.addChild(assistantComponent);
+						assistantSegments.push(assistantComponent);
+						continue;
+					}
+
+					const content = message.content[segment.contentIndex];
 					if (content.type === "toolCall") {
 						const component = new ToolExecutionComponent(
 							content.name,
@@ -2259,6 +2319,11 @@ export class InteractiveMode {
 						}
 					}
 				}
+
+				// Match streaming-mode behavior: show metadata once on the final
+				// assistant prose segment for this message.
+				const lastAssistantSegment = assistantSegments[assistantSegments.length - 1];
+				lastAssistantSegment?.setShowMetadata(true);
 			} else if (message.role === "toolResult") {
 				// Match tool results to pending tool components
 				const component = this.pendingTools.get(message.toolCallId);
