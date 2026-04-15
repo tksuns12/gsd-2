@@ -6,7 +6,13 @@ import { tmpdir } from "node:os";
 
 import { handleGSDCommand } from "../commands/dispatcher.ts";
 import { handleDebug } from "../commands-debug.ts";
-import { debugSessionArtifactPath, debugSessionsDir } from "../debug-session-store.ts";
+import {
+  createDebugSession,
+  debugSessionArtifactPath,
+  debugSessionsDir,
+  loadDebugSession,
+  updateDebugSession,
+} from "../debug-session-store.ts";
 
 interface DispatchCall {
   payload: any;
@@ -377,6 +383,229 @@ test("/gsd debug negative: multiple sessions with similar slugs — status and c
     await handleGSDCommand("debug status login-token-expires-too-fast", ctx as any, {} as any);
     const suffixedStatus = lastNotification(ctx);
     assert.match(suffixedStatus.message, /^Debug session status: login-token-expires-too-fast$/m);
+  } finally {
+    process.chdir(saved);
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+// ── S03 tests: checkpoint/TDD gate dispatch and backward compat ──────────────
+
+test("/gsd debug S03: checkpoint resume dispatches enriched payload via debug-session-manager template", async () => {
+  const base = makeBase();
+  const saved = process.cwd();
+  process.chdir(base);
+
+  try {
+    const ctx = createMockCtx();
+    const { calls, pi } = createMockPiWithDispatch();
+
+    const created = createDebugSession(base, { issue: "Login fails after deploy" });
+    const slug = created.session.slug;
+
+    updateDebugSession(base, slug, {
+      checkpoint: {
+        type: "human-verify",
+        summary: "Verify fix on staging",
+        awaitingResponse: true,
+      },
+    });
+
+    await handleDebug(`continue ${slug}`, ctx as any, pi as any);
+
+    const n = lastNotification(ctx);
+    assert.equal(n.level, "info");
+    assert.match(n.message, new RegExp(`Resumed debug session: ${slug}`));
+    assert.match(n.message, /phase=continued/);
+    assert.match(n.message, /dispatchMode=checkpointType=human-verify/);
+
+    assert.equal(calls.length, 1, "should dispatch exactly one message");
+    const call = calls[0];
+    assert.equal(call.payload.customType, "gsd-debug-continue");
+    // debug-session-manager template marker (absent from debug-diagnose)
+    assert.match(call.payload.content, /Structured Return Protocol/);
+    // Checkpoint context embedded
+    assert.match(call.payload.content, /## Active Checkpoint/);
+    assert.match(call.payload.content, /type: human-verify/);
+    assert.match(call.payload.content, /summary: Verify fix on staging/);
+    assert.match(call.payload.content, /awaitingResponse: true/);
+    assert.equal(call.options.triggerTurn, true);
+  } finally {
+    process.chdir(saved);
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("/gsd debug S03: TDD gate pending dispatches find_root_cause_only with TDD instructions", async () => {
+  const base = makeBase();
+  const saved = process.cwd();
+  process.chdir(base);
+
+  try {
+    const ctx = createMockCtx();
+    const { calls, pi } = createMockPiWithDispatch();
+
+    const created = createDebugSession(base, { issue: "Auth refresh races on mobile" });
+    const slug = created.session.slug;
+
+    updateDebugSession(base, slug, {
+      tddGate: { enabled: true, phase: "pending" },
+    });
+
+    await handleDebug(`continue ${slug}`, ctx as any, pi as any);
+
+    const n = lastNotification(ctx);
+    assert.equal(n.level, "info");
+    assert.match(n.message, new RegExp(`Resumed debug session: ${slug}`));
+    assert.match(n.message, /dispatchMode=tddPhase=pending/);
+
+    assert.equal(calls.length, 1, "should dispatch exactly one message");
+    const call = calls[0];
+    assert.equal(call.payload.customType, "gsd-debug-continue");
+    // Active goal must be find_root_cause_only (not find_and_fix)
+    assert.match(call.payload.content, /## Goal\s+`find_root_cause_only`/);
+    assert.doesNotMatch(call.payload.content, /## Goal\s+`find_and_fix`/);
+    // TDD gate section present
+    assert.match(call.payload.content, /## TDD Gate/);
+    assert.match(call.payload.content, /phase: pending/);
+    assert.match(call.payload.content, /TDD mode is active/);
+    // debug-session-manager template marker
+    assert.match(call.payload.content, /Structured Return Protocol/);
+    assert.equal(call.options.triggerTurn, true);
+  } finally {
+    process.chdir(saved);
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("/gsd debug S03: TDD gate red dispatches find_and_fix and advances phase to green", async () => {
+  const base = makeBase();
+  const saved = process.cwd();
+  process.chdir(base);
+
+  try {
+    const ctx = createMockCtx();
+    const { calls, pi } = createMockPiWithDispatch();
+
+    const created = createDebugSession(base, { issue: "Auth token expiry not handled" });
+    const slug = created.session.slug;
+
+    updateDebugSession(base, slug, {
+      tddGate: {
+        enabled: true,
+        phase: "red",
+        testFile: "auth.test.ts",
+        testName: "rejects expired token",
+      },
+    });
+
+    await handleDebug(`continue ${slug}`, ctx as any, pi as any);
+
+    const n = lastNotification(ctx);
+    assert.equal(n.level, "info");
+    assert.match(n.message, new RegExp(`Resumed debug session: ${slug}`));
+    assert.match(n.message, /dispatchMode=tddPhase=red/);
+
+    assert.equal(calls.length, 1, "should dispatch exactly one message");
+    const call = calls[0];
+    assert.equal(call.payload.customType, "gsd-debug-continue");
+    assert.match(call.payload.content, /## Goal\s+`find_and_fix`/);
+    assert.match(call.payload.content, /## TDD Gate/);
+    assert.match(call.payload.content, /phase: red/);
+    assert.match(call.payload.content, /testFile: auth\.test\.ts/);
+    assert.match(call.payload.content, /testName: rejects expired token/);
+    assert.equal(call.options.triggerTurn, true);
+
+    // Reload artifact from disk and verify tddGate.phase advanced to green
+    const reloaded = loadDebugSession(base, slug);
+    assert.ok(reloaded, "session should still exist after continue");
+    assert.equal(reloaded!.session.tddGate?.phase, "green", "tddGate.phase must advance red→green");
+    assert.equal(reloaded!.session.phase, "continued");
+  } finally {
+    process.chdir(saved);
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("/gsd debug S03: backward compat — legacy session without checkpoint/TDD uses debug-diagnose template", async () => {
+  const base = makeBase();
+  const saved = process.cwd();
+  process.chdir(base);
+
+  try {
+    const ctx = createMockCtx();
+    const { calls, pi } = createMockPiWithDispatch();
+
+    // S02-era session — no checkpoint, no tddGate fields set
+    const created = createDebugSession(base, { issue: "Payment retries hang indefinitely" });
+    const slug = created.session.slug;
+
+    await handleDebug(`continue ${slug}`, ctx as any, pi as any);
+
+    const n = lastNotification(ctx);
+    assert.equal(n.level, "info");
+    assert.match(n.message, new RegExp(`Resumed debug session: ${slug}`));
+    assert.match(n.message, /phase=continued/);
+    assert.match(n.message, /dispatchMode=find_and_fix/);
+
+    assert.equal(calls.length, 1, "should dispatch exactly one message");
+    const call = calls[0];
+    assert.equal(call.payload.customType, "gsd-debug-continue");
+    // debug-diagnose template: no Structured Return Protocol, no checkpoint/TDD sections
+    assert.doesNotMatch(call.payload.content, /Structured Return Protocol/);
+    assert.doesNotMatch(call.payload.content, /## Active Checkpoint/);
+    assert.doesNotMatch(call.payload.content, /## TDD Gate/);
+    assert.match(call.payload.content, /find_and_fix/);
+    assert.equal(call.options.triggerTurn, true);
+  } finally {
+    process.chdir(saved);
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("/gsd debug S03: round-trip — checkpoint with userResponse dispatches response and session transitions to continued", async () => {
+  const base = makeBase();
+  const saved = process.cwd();
+  process.chdir(base);
+
+  try {
+    const ctx = createMockCtx();
+    const { calls, pi } = createMockPiWithDispatch();
+
+    const created = createDebugSession(base, { issue: "Cache invalidation race on deploy" });
+    const slug = created.session.slug;
+
+    // Simulate agent setting checkpoint, then user providing a response
+    updateDebugSession(base, slug, {
+      checkpoint: {
+        type: "human-verify",
+        summary: "Check whether stale keys appear after deploy",
+        awaitingResponse: true,
+        userResponse: "Confirmed on staging",
+      },
+    });
+
+    await handleDebug(`continue ${slug}`, ctx as any, pi as any);
+
+    const n = lastNotification(ctx);
+    assert.equal(n.level, "info");
+    assert.match(n.message, new RegExp(`Resumed debug session: ${slug}`));
+    assert.match(n.message, /phase=continued/);
+
+    assert.equal(calls.length, 1, "should dispatch exactly one message");
+    const call = calls[0];
+    assert.equal(call.payload.customType, "gsd-debug-continue");
+    // userResponse embedded in DATA_START/DATA_END security wrapper
+    assert.match(call.payload.content, /DATA_START/);
+    assert.match(call.payload.content, /Confirmed on staging/);
+    assert.match(call.payload.content, /DATA_END/);
+    assert.equal(call.options.triggerTurn, true);
+
+    // Verify session state persisted to disk after continue
+    const reloaded = loadDebugSession(base, slug);
+    assert.ok(reloaded, "session should still exist");
+    assert.equal(reloaded!.session.phase, "continued");
+    assert.equal(reloaded!.session.status, "active");
   } finally {
     process.chdir(saved);
     rmSync(base, { recursive: true, force: true });
