@@ -349,3 +349,191 @@ test("ADR-011 ON CONFLICT: empty-string sketchScope clears existing scope (not p
   });
   assert.equal(getSlice("M001", "S01")?.sketch_scope, "", "explicit '' must clear, not preserve");
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ADR-011 Phase 3 — Integration: Progressive Planning
+// ═══════════════════════════════════════════════════════════════════════════
+
+test("ADR-011 P3 #19: refine-slice prompt incorporates prior slice findings + sketch scope as hard constraint", async (t) => {
+  // Exercises the end-to-end path that makes progressive planning useful:
+  //   1. M001 has 3 slices. S01 is full and complete, with a SUMMARY.md that
+  //      contains specific findings. S02 is a sketch that depends on S01.
+  //   2. The refining-phase dispatch builds S02's prompt via buildRefineSlicePrompt.
+  //   3. The generated prompt must contain BOTH the S01 findings (via
+  //      inlineDependencySummaries, same path plan-slice uses) AND the stored
+  //      sketch_scope prepended as a hard-constraint block (escalation-free
+  //      Phase 1 contract).
+  //
+  // This is the core value proposition of ADR-011: refine against the latest
+  // codebase state + upstream findings, not the blank snapshot from initial
+  // plan-milestone. If either piece is missing, the refine flow has regressed.
+  const originalCwd = process.cwd();
+  const base = makeFixtureBase();
+  t.after(() => cleanup(base, originalCwd));
+
+  openDatabase(join(base, ".gsd", "gsd.db"));
+  insertMilestone({ id: "M001", title: "Integration test milestone", status: "active" });
+  insertSlice({
+    id: "S01", milestoneId: "M001", title: "Foundation",
+    status: "complete", risk: "high", depends: [], sequence: 1,
+    isSketch: false,
+  });
+  insertSlice({
+    id: "S02", milestoneId: "M001", title: "Feature built on foundation",
+    status: "pending", risk: "medium", depends: ["S01"], sequence: 2,
+    isSketch: true,
+    sketchScope: "Feature X in module Y only; do not refactor the foundation.",
+  });
+  insertSlice({
+    id: "S03", milestoneId: "M001", title: "Polish",
+    status: "pending", risk: "low", depends: ["S02"], sequence: 3,
+    isSketch: true,
+    sketchScope: "Polish + docs for Feature X.",
+  });
+
+  // Minimal roadmap so inlineRoadmapExcerpt has something to read.
+  writeFileSync(
+    join(base, ".gsd", "milestones", "M001", "ROADMAP.md"),
+    [
+      "# M001: Integration test milestone",
+      "",
+      "## Slices",
+      "",
+      "- [x] **S01: Foundation** `risk:high` `depends:[]`",
+      "- [ ] **S02: Feature built on foundation** `risk:medium` `depends:[S01]`",
+      "- [ ] **S03: Polish** `risk:low` `depends:[S02]`",
+      "",
+    ].join("\n"),
+  );
+
+  // Write S01 artifacts — the SUMMARY carries findings that S02's refine pass
+  // must incorporate. The specific markers below are what the assertion pins.
+  writeFileSync(
+    join(base, ".gsd", "milestones", "M001", "slices", "S01", "S01-PLAN.md"),
+    "# S01 Plan\n",
+  );
+  const s01Findings = [
+    "# S01 Summary",
+    "",
+    "## Findings",
+    "",
+    "- FINDING-MARKER-AUTH: chose JWT over sessions for statelessness.",
+    "- FINDING-MARKER-DB: schema v17 migration required before S02 can safely add the feature table.",
+    "",
+    "## Key Decisions",
+    "",
+    "- Do not introduce a background worker yet — premature.",
+  ].join("\n");
+  writeFileSync(
+    join(base, ".gsd", "milestones", "M001", "slices", "S01", "S01-SUMMARY.md"),
+    s01Findings,
+  );
+
+  writePreferences(base, "phases:\n  progressive_planning: true");
+  process.chdir(base);
+
+  // Build the refine prompt for S02 — the same call the refining-phase
+  // dispatch rule would make in production.
+  const { buildRefineSlicePrompt } = await import("../auto-prompts.ts");
+  const prompt = await buildRefineSlicePrompt(
+    "M001", "Integration test milestone", "S02", "Feature built on foundation", base,
+  );
+
+  // ── Sketch scope injected as a hard constraint ─────────────────────────
+  assert.match(
+    prompt,
+    /## Sketch Scope \(hard constraint\)/,
+    "refine prompt must frame sketch_scope as a hard constraint",
+  );
+  assert.match(
+    prompt,
+    /Feature X in module Y only/,
+    "refine prompt must include the stored sketch_scope text verbatim",
+  );
+
+  // ── Prior slice findings carried forward from S01-SUMMARY ──────────────
+  assert.match(
+    prompt,
+    /FINDING-MARKER-AUTH/,
+    "S01's auth finding must surface in the S02 refine prompt",
+  );
+  assert.match(
+    prompt,
+    /FINDING-MARKER-DB/,
+    "S01's DB finding must surface in the S02 refine prompt",
+  );
+  assert.match(
+    prompt,
+    /S01 Summary/,
+    "inlineDependencySummaries must label the injected block with S01's section header",
+  );
+
+  // ── Not the stale blank-slate plan-slice framing ───────────────────────
+  // The refine prompt is a *transformation*, not a blank-sheet plan. Pin the
+  // distinction so future prompt edits don't silently collapse the two paths.
+  assert.doesNotMatch(
+    prompt,
+    /Prior Sketch Scope \(soft hint — non-binding\)/,
+    "refine prompt must NOT use the soft-hint framing (that's the plan-slice flag-off downgrade)",
+  );
+});
+
+test("ADR-011 P3 #26: refine-slice dispatch latency is bounded vs plan-slice baseline", async (t) => {
+  // Pins the Zylos 2026 research claim that progressive planning trades a
+  // small dispatch-time cost for significant plan quality. The refine path
+  // does extra work: it reads sketch_scope from the DB and inlines the
+  // dependency summaries. Neither operation should dominate the prompt build.
+  //
+  // Absolute: < 500ms wall clock. Relative: < 3x plan-slice baseline.
+  // Both bounds are deliberately generous — this test is a regression gate,
+  // not a benchmark. The goal is catching accidental O(N) fs walks or DB
+  // queries that would multiply dispatch time as milestones grow.
+  const originalCwd = process.cwd();
+  const base = makeFixtureBase();
+  t.after(() => cleanup(base, originalCwd));
+
+  seedMilestoneWithSketchedS02(base);
+  writeS01Artifacts(base);
+  writeFileSync(
+    join(base, ".gsd", "milestones", "M001", "ROADMAP.md"),
+    [
+      "# M001: Test",
+      "",
+      "## Slices",
+      "",
+      "- [x] **S01: Foundation** `risk:high` `depends:[]`",
+      "- [ ] **S02: Feature** `risk:medium` `depends:[S01]`",
+      "",
+    ].join("\n"),
+  );
+  writePreferences(base, "phases:\n  progressive_planning: true");
+  process.chdir(base);
+
+  const { buildRefineSlicePrompt, buildPlanSlicePrompt } = await import("../auto-prompts.ts");
+
+  // Warm-up pass — first call loads the prompt template from disk and primes
+  // fs/DB caches. Measuring the cold path would be noisy and misleading.
+  await buildPlanSlicePrompt("M001", "Test", "S02", "Feature", base);
+  await buildRefineSlicePrompt("M001", "Test", "S02", "Feature", base);
+
+  const planStart = Date.now();
+  await buildPlanSlicePrompt("M001", "Test", "S02", "Feature", base);
+  const planElapsed = Date.now() - planStart;
+
+  const refineStart = Date.now();
+  await buildRefineSlicePrompt("M001", "Test", "S02", "Feature", base);
+  const refineElapsed = Date.now() - refineStart;
+
+  assert.ok(
+    refineElapsed < 500,
+    `refine-slice prompt build must complete under 500ms (took ${refineElapsed}ms)`,
+  );
+  // Guard the ratio only when the baseline is large enough to be meaningful —
+  // if plan-slice measures 0-2ms the ratio is dominated by timer noise.
+  if (planElapsed >= 5) {
+    assert.ok(
+      refineElapsed < planElapsed * 3,
+      `refine-slice must not exceed 3x plan-slice baseline (refine=${refineElapsed}ms, plan=${planElapsed}ms)`,
+    );
+  }
+});
