@@ -686,7 +686,10 @@ export class ExtensionRunner {
 		return currentMessages;
 	}
 
-	async emitBeforeProviderRequest(payload: unknown, model?: { provider: string; id: string }): Promise<unknown> {
+	async emitBeforeProviderRequest(
+		payload: unknown,
+		model?: { provider: string; id: string; api?: string },
+	): Promise<unknown> {
 		let currentPayload = payload;
 
 		await this.invokeHandlers("before_provider_request", () => ({
