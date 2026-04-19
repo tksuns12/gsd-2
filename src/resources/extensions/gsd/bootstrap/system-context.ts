@@ -111,6 +111,19 @@ export async function buildBeforeAgentStartResult(
     );
   }
 
+  // ADR-013 step 5: opportunistic decisions->memories backfill. Idempotent
+  // and best-effort — first run absorbs the existing decisions table into
+  // the memory store; subsequent runs are a single sentinel SELECT.
+  try {
+    const { backfillDecisionsToMemories } = await import("../memory-backfill.js");
+    const written = backfillDecisionsToMemories();
+    if (written > 0) {
+      ctx.ui.notify(`GSD: backfilled ${written} decision${written === 1 ? "" : "s"} into the memory store (ADR-013).`, "info");
+    }
+  } catch (e) {
+    logWarning("bootstrap", `decisions backfill failed: ${(e as Error).message}`);
+  }
+
   const memoryBlock = await loadMemoryBlock(event.prompt ?? "");
 
   let newSkillsBlock = "";
