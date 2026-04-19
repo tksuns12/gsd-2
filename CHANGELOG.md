@@ -6,6 +6,161 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [2.76.0] - 2026-04-19
+
+### Added
+- **gsd**: memory maintenance \u2014 cap cascade, decay observability, export/import (Phase 5)
+- **gsd**: memory relationships / knowledge graph (Phase 4)
+- **gsd**: hybrid keyword + semantic memory retrieval (Phase 3)
+- **gsd**: memory ingestion + scope/tags (Phase 2)
+- **gsd**: memory tools — capture_thought, memory_query, gsd_graph (Phase 1)
+- **web**: surface CLI onboarding completion record in settings
+- **gsd**: /gsd onboarding re-entry + setup hub disambiguation
+- **tui**: refresh chat, footer, and welcome screen
+- **models**: add gpt-5.4-mini to openai-codex list (#1215)
+- **gsd**: ADR-011 Phase 2 mid-execution escalation (#3789)
+- **gsd**: ADR-011 Phase 1 progressive planning (sketch-then-refine) (#3789)
+- **routing**: add allow_flat_rate_providers opt-in (#4386)
+- **workflow**: unified plugin system with modes and remote install
+- **pi-ai**: add claude-opus-4-7 for Bedrock, Antigravity and OpenRouter (#4348)
+- **pi-ai**: add claude-opus-4-7 model support
+- **remote**: add Telegram command interface for auto-mode control
+- **theme**: add tui-classic and web classic/vivid palettes (#4301)
+- Added `/gsd debug` GitBook and Mintlify feature pages, wired both…
+- Added specialistContext to debug-session-manager template and wir…
+- Wired checkpoint and TDD gate logic into the continue handler: di…
+- Extended session artifact with DebugCheckpoint/DebugTddGate inter…
+- Wired diagnose-only and continue flows to prompt dispatch with ex…
+- Implemented a V2 debug session store with atomic JSON persistence…
+- **gsd**: add /gsd scan command for rapid codebase assessment
+- **pi-ai**: support ANTHROPIC_BASE_URL env var for custom proxy endpoints (#4140)
+- **ask-user-questions**: add optional markdown preview panel with side-by-side layout
+
+### Fixed
+- **extensions**: widen emitBeforeProviderRequest model param with api
+- **search**: gate native web_search on api shape, not provider ID (#4478)
+- **mcp**: extend non-empty validation across all schema-loose/executor-strict tools
+- **mcp**: reject empty slice fields in gsd_plan_milestone at schema layer
+- **gsd**: normalize doctor worktree cwd paths
+- **gsd**: skip dashboard git log outside repos
+- **gsd**: handle symlinked gsd stash pathspec
+- **pi-coding-agent**: preserve subagent tool list when --tools uses casing or extension names
+- **mcp**: address peer review — narrow realpath catch, guard prefs throw, document queue race
+- **mcp**: schema parity, guard hardening, queue timeout, session eviction (#4475)
+- **gsd**: register memory-* LogComponent variants
+- **gsd**: thread modelRegistry and sessionContextWindow through dispatch (#4142)
+- **gsd**: /gsd onboarding no longer hangs the TUI on re-entry
+- **gsd**: address #4468 CodeRabbit review — mention same-task outputs in blocking message
+- **gsd**: exempt task's own output from pre-exec input check (#4459)
+- **gsd**: address #4463 CodeRabbit review — preserve error text, guard DB, test 'done'
+- **onboarding**: suppress duplicate intro banner on /gsd onboarding re-entry
+- **gsd**: preserve dynamic routing provider prefixes
+- **gsd**: resolve onboarding wizard module from deployed package root
+- **gsd**: wrap notifications with column-aware wrapper (#4465)
+- **gsd**: cascade skipped-slice status to its tasks (#4375)
+- **gsd**: forbid drafting tests that reference gitignored paths
+- **gsd**: address #4456 nitpicks — thread pi to setup hub, dedupe + O(1) step lookup
+- **gsd**: honor 'not_yet' defer + use basePath for prefs path (#4457 review)
+- **gsd**: promote CONTEXT-DRAFT.md in gsd_summary_save tool path
+- **gsd**: use workflow-logger in onboarding-state catch (silent-catch test)
+- **gsd**: respect resources rootDir in onboarding handler + state
+- **gsd**: re-normalize separators after tilde expansion in normalizeFilePath
+- **gsd**: pre-exec checks false-positive on directory inputs and ~/ paths
+- **gsd**: confirm projection file exists before reporting success
+- **gsd**: address CodeRabbit review on #4402 roadmap fix
+- **gsd**: preserve ROADMAP.md sections after projection hook
+- **tui**: CI green + apply review findings
+- **remote-questions**: normalize remote answers to RoundResult shape
+- **gsd**: reactivate deferred slice on plan-slice
+- **gsd**: block code-extension fallback for non-JS explicit imports
+- **gsd**: resolve asset imports in post-execution checks (#4411)
+- **tui**: skip pinned Latest Output when text still on-screen (#4440)
+- **gsd**: honour git.snapshots preference in doctor snapshot paths (#4420)
+- **ci**: make version-check workflow parse cleanly + harden to issues-only
+- **gsd**: cap dep summaries + scale preamble to context_window (#4435)
+- **ci**: move @next dist-tag when version already published
+- **gsd**: use path.relative() for LEARNINGS.md relative path (#4433 review)
+- **gsd**: wire /gsd extract-learnings into the cross-session knowledge workflow (#4429)
+- **gsd**: normalize python commands with leading whitespace (#4416)
+- **gsd**: rewrite full 'py -N' token in normalizePythonCommand (#4416)
+- **gsd-db**: add gsd_checkpoint_db tool to flush WAL during active session
+- **gsd**: heal .gsd.migrating on resume path in startAuto (#4416)
+- **gsd**: normalize python invocations on Windows in verification gate (#4416)
+- **gsd**: remove hardcoded rg guidance from planning prompt fallback (#4416)
+- **gsd**: self-heal symlinked .gsd staging to prevent silent data loss (#4423)
+- **gsd**: pre-exec checks false-positive on URL and prose-annotated inputs (#4421)
+- **gsd**: flip uok.gitops.turn_action default to "commit" (#4419)
+- **claude-code-cli**: extract test bodies to documented functions
+- **claude-code-cli**: address CodeRabbit review on #4425
+- **claude-code-cli**: detect Windows .cmd shim in CLI readiness checks
+- **gsd**: auto-mode stuck loop on research dispatch (#4414)
+- **gsd**: compensating rollback on escalation write failure (pause-required)
+- **gsd**: ADR-011 code-review findings — reconcile/restore state preservation, strict validation
+- **pi-ai**: address coderabbit review comments on #4392
+- **pi-ai**: wire thinking:{type} field and extend adaptive-thinking model coverage (#4392)
+- **gsd**: preserve ADR-011 P2 columns through reconcileWorktreeDb
+- **gsd**: post-ship review findings for ADR-011 Phase 2
+- **gsd**: add missing TaskRow escalation fields to tests + paramsToTaskRow
+- **gsd**: use valid LogComponent for escalation warnings
+- **auth**: self-heal stale Anthropic OAuth credential (#4399)
+- **gsd**: invalidate caches after branch-mode checkout and validate main_branch pref
+- **test**: add getIsolationMode override in worktree-skip journal test
+- **gsd**: create milestone branch on entry in isolation:branch mode (#4389)
+- **gsd**: handle auto-mode limit errors with model fallback (#4373)
+- **ci**: remove duplicate tmpdir import in journal-integration test
+- **workflow**: path containment, direct-dispatch overrides, gist ext fallback
+- **pi-ai**: pass xhigh effort natively for opus-4-7; fix Bedrock mapping; bump SDK to 0.90.0
+- **notifications**: fire remote notification before desktop guard
+- **notifications**: call sendRemoteNotification from sendDesktopNotification
+- **gsd-scan**: use .gsd/codebase/ instead of .planning/codebase/
+- **gsd**: redispatch active custom workflow steps
+- remove Claude Code reference from forensics comment
+- **dispatch**: reconcile DB when SUMMARY exists on disk (#4324)
+- **gsd**: stage untracked files on symlink add fallback
+- **gsd**: ignore glob-like plan inputs in pre-exec checks
+- **ci**: rewrite version-check comment as array join to fix YAML syntax
+- **gsd**: pause on complete-milestone disk/db mismatch
+- **gsd**: detect repeated units across the stuck window
+- **dispatch**: skip complete-milestone for DB-complete milestones (#4324)
+- **gsd**: restore slice parallel guard nesting
+- **gsd**: repair execute-task plan recovery checkboxes
+- **gsd**: fail closed on finalize timeouts
+- **gsd**: persist active custom workflow steps before dispatch
+- **gsd**: increment unit dispatch counts on dispatch
+- **gsd**: treat workflow validate and list as quick commands
+- **gsd**: treat unexpected eof as transient network error
+- **gsd**: preserve legacy cmux preference writes
+- **gsd**: track queued wrapup skips before execution
+- **gsd**: enable structured milestone questions in auto mode
+- **gsd**: prefer canonical preferences paths
+- **gsd**: cancel auto unit when model restore fails
+- **gsd**: suppress built-in footer on session_start when auto-mode is active
+- **ci**: resolve YAML syntax error in version-check workflow
+- **pi-ai**: remove decommissioned Groq models
+- **ci**: make rtk shared shim work in dist-test
+- **ci**: keep resource extension types self-contained
+- **ci**: avoid RpcClient private process type intersection
+- **ci**: import isTruthy in rtk runtime
+- **doctor**: suppress false Anthropic key missing warning when using claude-code
+- **ci**: add strip-types shim for rtk-shared
+- **ci**: restore canonical AssistantMessageEventStream export
+- **update**: detect bun install via argv[1] path (#4145)
+- **gitignore**: restore baseline ignore rules
+- **tests**: isolate ExternalCli provider check in web onboarding tests
+- **web**: add claude-code ExternalCli provider to onboarding catalog
+- **agent-session**: call abort() before _disconnectFromAgent() in newSession/resumeSession (#4243)
+- **pi-ai**: hide unsupported ChatGPT codex oauth models
+- **test**: add test environment isolation for worktree and RTK tests
+
+### Changed
+- **gsd**: route /gsd init preferences through unified writer
+- remove accidentally-committed .mcp.json and .worktrees/
+- **gsd**: address CodeRabbit review on #4433
+- code quality cleanup and contract hardening
+- remove local test.cmd helper from feature branch
+- auto-commit after complete-milestone
+- extract splitCompletedKey() helper, remove duplication (per review)
+
 ### Fixed
 
 - **gsd**: promote `CONTEXT-DRAFT.md` to final `CONTEXT.md` in the `gsd_summary_save` tool path (#4442)
@@ -3242,7 +3397,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - License updated to MIT
 
-[Unreleased]: https://github.com/gsd-build/gsd-2/compare/v2.75.0...HEAD
+[Unreleased]: https://github.com/gsd-build/gsd-2/compare/v2.76.0...HEAD
+[2.76.0]: https://github.com/gsd-build/gsd-2/compare/v2.75.0...v2.76.0
 [2.75.0]: https://github.com/gsd-build/gsd-2/compare/v2.74.0...v2.75.0
 [2.74.0]: https://github.com/gsd-build/gsd-2/compare/v2.73.1...v2.74.0
 [2.73.1]: https://github.com/gsd-build/gsd-2/compare/v2.73.0...v2.73.1
