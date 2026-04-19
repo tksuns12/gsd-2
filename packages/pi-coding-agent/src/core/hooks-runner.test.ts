@@ -93,7 +93,7 @@ describe("createHooksRunner — trust gate", () => {
       getProjectSettings: (): Settings => ({
         hooks: {
           SessionStart: [
-            { command: "node -e 'process.stdout.write(\"{}\")'" },
+            { command: `node -e "process.stdout.write('{}')"` },
           ],
         },
       }),
@@ -117,7 +117,7 @@ describe("createHooksRunner — trust gate", () => {
       getGlobalSettings: (): Settings => ({}),
       getProjectSettings: (): Settings => ({
         hooks: {
-          SessionStart: [{ command: "true" }],
+          SessionStart: [{ command: `node -e "process.exit(0)"` }],
         },
       }),
       cwd: tmpCwd,
@@ -125,7 +125,7 @@ describe("createHooksRunner — trust gate", () => {
     });
 
     await hooks.fireSessionStart();
-    assert.deepEqual(invocations, ["true"]);
+    assert.deepEqual(invocations, [`node -e "process.exit(0)"`]);
     hooks.dispose();
   });
 
@@ -137,7 +137,7 @@ describe("createHooksRunner — trust gate", () => {
     const hooks = createHooksRunner({
       extensionRunner: runner,
       getGlobalSettings: (): Settings => ({
-        hooks: { SessionStart: [{ command: "true" }] },
+        hooks: { SessionStart: [{ command: `node -e "process.exit(0)"` }] },
       }),
       getProjectSettings: (): Settings => ({}),
       cwd: tmpCwd,
@@ -145,7 +145,7 @@ describe("createHooksRunner — trust gate", () => {
     });
 
     await hooks.fireSessionStart();
-    assert.deepEqual(invocations, ["true"]);
+    assert.deepEqual(invocations, [`node -e "process.exit(0)"`]);
     hooks.dispose();
   });
 });
@@ -167,7 +167,7 @@ describe("createHooksRunner — PreToolUse bridges to tool_call", () => {
         hooks: {
           PreToolUse: [
             {
-              command: `node -e 'process.stdout.write(JSON.stringify({block:true,reason:"nope"}))'`,
+              command: `node -e "process.stdout.write(JSON.stringify({block:true,reason:'nope'}))"`,
             },
           ],
         },
@@ -197,7 +197,7 @@ describe("createHooksRunner — PreToolUse bridges to tool_call", () => {
           PreToolUse: [
             {
               match: { tool: "bash" },
-              command: `node -e 'process.stdout.write(JSON.stringify({block:true,reason:"bash-only"}))'`,
+              command: `node -e "process.stdout.write(JSON.stringify({block:true,reason:'bash-only'}))"`,
             },
           ],
         },
@@ -230,7 +230,7 @@ describe("createHooksRunner — PreToolUse bridges to tool_call", () => {
     createHooksRunner({
       extensionRunner: runner,
       getGlobalSettings: (): Settings => ({
-        hooks: { PreToolUse: [{ command: "false" }] },
+        hooks: { PreToolUse: [{ command: `node -e "process.exit(1)"` }] },
       }),
       getProjectSettings: (): Settings => ({}),
       cwd: tmpCwd,
@@ -252,7 +252,7 @@ describe("createHooksRunner — PreToolUse bridges to tool_call", () => {
     createHooksRunner({
       extensionRunner: runner,
       getGlobalSettings: (): Settings => ({
-        hooks: { PreToolUse: [{ command: "false", blocking: false }] },
+        hooks: { PreToolUse: [{ command: `node -e "process.exit(1)"`, blocking: false }] },
       }),
       getProjectSettings: (): Settings => ({}),
       cwd: tmpCwd,

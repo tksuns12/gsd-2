@@ -1536,12 +1536,24 @@ export class AgentSession {
 		await this.agent.waitForIdle();
 		// Ensure agent_end is emitted even when abort interrupts a tool call (#1414).
 		// The agent may go idle without emitting agent_end if the abort happens
-		// between tool execution and response processing.
+		// between tool execution and response processing. Also fire Stop so
+		// Layer 0 hooks see a consistent view of session quiescence.
 		if (!this.isStreaming && this._extensionRunner) {
+			const messages = this.agent.state.messages;
 			await this._extensionRunner.emit({
 				type: "agent_end",
-				messages: this.agent.state.messages,
+				messages,
 			});
+			const last = messages[messages.length - 1];
+			const stopReason: "completed" | "cancelled" | "error" | "blocked" =
+				last?.role === "assistant"
+					? last.stopReason === "aborted"
+						? "cancelled"
+						: last.stopReason === "error"
+							? "error"
+							: "completed"
+					: "cancelled";
+			await this._extensionRunner.emitStop({ reason: stopReason, lastMessage: last });
 		}
 	}
 

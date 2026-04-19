@@ -289,6 +289,7 @@ export function createHooksRunner(options: HooksRunnerOptions): HooksRunner {
 			input: e.input,
 			content: e.content,
 			isError: e.isError,
+			details: e.details,
 		});
 		return undefined;
 	}]);

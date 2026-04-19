@@ -293,25 +293,6 @@ export async function runPostUnitVerification(
         ? prefs.verification_max_retries
         : 2;
 
-    // Emit Layer 2 verify_result event (post-plan hook recommendation).
-    try {
-      const { emitVerifyResult } = await import("./hook-emitter.js");
-      await emitVerifyResult({
-        passed: result.passed,
-        failures: result.checks
-          .filter((c) => c.exitCode !== 0)
-          .map((c) => ({
-            kind: "gate" as const,
-            message: `${c.command} exited ${c.exitCode}${c.stderr ? `: ${c.stderr.slice(0, 200)}` : ""}`,
-          })),
-        unitType: s.currentUnit.type,
-        unitId: s.currentUnit.id,
-        cwd: s.basePath,
-      });
-    } catch {
-      // Non-fatal — hook emission must not break verification.
-    }
-
     if (result.checks.length > 0) {
       const passCount = result.checks.filter((c) => c.exitCode === 0).length;
       const total = result.checks.length;
@@ -543,6 +524,39 @@ export async function runPostUnitVerification(
     // Update result.passed based on post-execution checks
     if (postExecBlockingFailure) {
       result.passed = false;
+    }
+
+    // Emit Layer 2 verify_result event with the final, post-exec verdict so hooks
+    // see the authoritative pass/fail and the complete set of failures.
+    try {
+      const { emitVerifyResult } = await import("./hook-emitter.js");
+      const checkFailures = result.checks
+        .filter((c) => c.exitCode !== 0)
+        .map((c) => ({
+          kind: "gate" as const,
+          message: `${c.command} exited ${c.exitCode}${c.stderr ? `: ${c.stderr.slice(0, 200)}` : ""}`,
+        }));
+      const runtimeFailures = (result.runtimeErrors ?? [])
+        .filter((e) => e.blocking)
+        .map((e) => ({
+          kind: "other" as const,
+          message: `[${e.source}] ${e.message.slice(0, 200)}`,
+        }));
+      const postExecFailures = (postExecChecks ?? [])
+        .filter((c) => !c.passed)
+        .map((c) => ({
+          kind: "other" as const,
+          message: `[${c.category}] ${c.target}: ${c.message}`,
+        }));
+      await emitVerifyResult({
+        passed: result.passed,
+        failures: [...checkFailures, ...runtimeFailures, ...postExecFailures],
+        unitType: s.currentUnit.type,
+        unitId: s.currentUnit.id,
+        cwd: s.basePath,
+      });
+    } catch (hookErr) {
+      logWarning("engine", `verify_result hook emission failed: ${(hookErr as Error).message}`);
     }
 
     // ── Auto-fix retry logic ──
