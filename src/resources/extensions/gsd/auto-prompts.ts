@@ -116,7 +116,18 @@ function formatExecutorConstraints(): string {
   ].join("\n");
 }
 
-function buildSourceFilePaths(
+/**
+ * Returns a markdown bullet list of known context file paths for the given
+ * milestone (and optionally slice). Falls back to a generic tool-agnostic
+ * instruction when no GSD artifacts are found.
+ *
+ * @param base - Absolute path to the project root.
+ * @param mid  - Milestone ID (e.g. `"M001"`).
+ * @param sid  - Optional slice ID (e.g. `"S01"`). When provided, the slice
+ *   RESEARCH file is preferred over the milestone-level one.
+ * @returns Markdown string of file path bullets, or a fallback instruction.
+ */
+export function buildSourceFilePaths(
   base: string,
   mid: string,
   sid?: string,
@@ -167,7 +178,7 @@ function buildSourceFilePaths(
 
   return paths.length > 0
     ? paths.join("\n")
-    : "- Use `rg --files` and targeted reads to identify the relevant source files before planning.";
+    : "- Use the Grep/Glob/Read tools to identify the relevant source files before planning.";
 }
 
 // ─── Inline Helpers ───────────────────────────────────────────────────────
