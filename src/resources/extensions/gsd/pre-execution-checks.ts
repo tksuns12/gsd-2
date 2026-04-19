@@ -456,7 +456,7 @@ export function checkFilePathConsistency(
           category: "file",
           target: file,
           passed: false,
-          message: `Task ${task.id} references '${file}' which doesn't exist and isn't created by prior tasks`,
+          message: `Task ${task.id} references '${file}' which doesn't exist and isn't created by prior or same-task outputs`,
           blocking: true,
         });
       }
