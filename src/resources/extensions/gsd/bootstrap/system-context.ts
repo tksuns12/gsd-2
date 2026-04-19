@@ -44,6 +44,15 @@ const BUNDLED_SKILL_TRIGGERS: Array<{ trigger: string; skill: string }> = [
   { trigger: "Draft a PRD or milestone brief (M###-CONTEXT.md) from current conversation context", skill: "to-prd" },
   { trigger: "Break a plan into vertical-slice roadmap slices or GitHub issues with dependency ordering", skill: "to-issues" },
   { trigger: "Package spike findings into a reusable project-local skill at .claude/skills/", skill: "spike-wrap-up" },
+  { trigger: "Block completion claims until verification evidence has been produced in this message", skill: "verify-before-complete" },
+  { trigger: "Build a Model Context Protocol (MCP) server — tool design, error handling, Inspector testing, evals", skill: "mcp-builder" },
+  { trigger: "Write documentation, proposals, specs, RFCs, or READMEs for a fresh reader", skill: "doc-coauthoring" },
+  { trigger: "Post-mortem a failed GSD auto-mode run using .gsd/activity, .gsd/journal, and .gsd/metrics.json", skill: "forensics" },
+  { trigger: "Prepare a clean cross-session handoff — continue.md + summary updates (pause/resume work)", skill: "handoff" },
+  { trigger: "Security review with STRIDE threat modeling and exploit-scenario reporting", skill: "security-review" },
+  { trigger: "HTTP/REST/GraphQL API design — verbs, status codes, pagination, errors, idempotency, versioning", skill: "api-design" },
+  { trigger: "Dependency upgrades — risk-batched, verified between batches, one major per commit", skill: "dependency-upgrade" },
+  { trigger: "Agent-first observability — structured logs, persisted failure state, health surfaces, explicit failure modes", skill: "observability" },
 ];
 
 function buildBundledSkillsTable(): string {
