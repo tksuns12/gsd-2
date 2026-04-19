@@ -14,11 +14,17 @@ import { execFileSync } from "node:child_process";
 /**
  * Candidate executable names for the Claude Code CLI.
  *
+ * Keep the explicit win32 ternary selector for regression coverage (Issue #4424):
+ * Node's execFileSync must target `claude.cmd` directly on Windows.
+ */
+const CLAUDE_COMMAND = process.platform === "win32" ? "claude.cmd" : "claude";
+
+/**
  * Windows installs vary: some environments expose `claude.cmd` (npm shim),
  * others expose a `claude` shim on PATH (for example Git Bash wrappers).
  * Try both to avoid false "not installed" results in readiness checks.
  */
-const CLAUDE_COMMAND_CANDIDATES = process.platform === "win32" ? ["claude.cmd", "claude"] : ["claude"];
+const CLAUDE_COMMAND_CANDIDATES = process.platform === "win32" ? [CLAUDE_COMMAND, "claude"] : [CLAUDE_COMMAND];
 
 function execClaude(args: string[]): Buffer {
 	let lastError: unknown;
