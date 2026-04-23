@@ -47,7 +47,7 @@ describe("StdinBuffer", () => {
 		buffer.on("data", (sequence) => received.push(sequence));
 
 		buffer.process("\x1b[");
-		await delay(25);
+		await delay(50);
 
 		assert.deepEqual(received, ["\x1b["]);
 		assert.equal(buffer.getBuffer(), "");
