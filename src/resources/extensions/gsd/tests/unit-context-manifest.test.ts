@@ -155,15 +155,17 @@ test("#4782 phase 1: complete-milestone manifest declares slice-summary as excer
   );
 });
 
-// ─── Phase-2 target: reassess-roadmap manifest is the tightest budget ────
+// ─── Budget floor: run-uat + gate-evaluate hit the smallest budget tier ──
 
-test("#4782 phase 1: reassess-roadmap manifest has the smallest budget among manifests", () => {
-  const m = UNIT_MANIFESTS["reassess-roadmap"];
+test("#4782 phase 2: run-uat and gate-evaluate use the smallest budget tier", () => {
+  const uatBudget = UNIT_MANIFESTS["run-uat"].maxSystemPromptChars;
+  const gateBudget = UNIT_MANIFESTS["gate-evaluate"].maxSystemPromptChars;
+  assert.strictEqual(uatBudget, gateBudget, "run-uat and gate-evaluate both use COMMON_BUDGET_SMALL");
+  // They should be the tightest (or tied for tightest) across all manifests
   for (const [unitType, other] of Object.entries(UNIT_MANIFESTS)) {
-    if (unitType === "reassess-roadmap") continue;
     assert.ok(
-      m.maxSystemPromptChars <= other.maxSystemPromptChars,
-      `reassess-roadmap budget (${m.maxSystemPromptChars}) should be ≤ ${unitType} budget (${other.maxSystemPromptChars})`,
+      uatBudget <= other.maxSystemPromptChars,
+      `run-uat budget (${uatBudget}) should be ≤ ${unitType} budget (${other.maxSystemPromptChars})`,
     );
   }
 });

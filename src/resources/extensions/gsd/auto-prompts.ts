@@ -33,6 +33,7 @@ import {
 } from "./gate-registry.js";
 import { formatDecisionsCompact, formatRequirementsCompact } from "./structured-data-formatter.js";
 import { readPhaseAnchor, formatAnchorForPrompt } from "./phase-anchor.js";
+import { composeInlinedContext, type ArtifactResolver } from "./unit-context-composer.js";
 import { logWarning } from "./workflow-logger.js";
 import { inlineGraphSubgraph } from "./graph-context.js";
 import { buildExtractionStepsBlock } from "./commands-extract-learnings.js";
@@ -2250,31 +2251,54 @@ export async function buildReassessRoadmapPrompt(
   mid: string, midTitle: string, completedSliceId: string, base: string, level?: InlineLevel,
 ): Promise<string> {
   const inlineLevel = level ?? resolveInlineLevel();
-  const roadmapPath = resolveMilestoneFile(base, mid, "ROADMAP");
-  const roadmapRel = relMilestoneFile(base, mid, "ROADMAP");
-  const summaryPath = resolveSliceFile(base, mid, completedSliceId, "SUMMARY");
-  const summaryRel = relSliceFile(base, mid, completedSliceId, "SUMMARY");
-  const sliceContextPath = resolveSliceFile(base, mid, completedSliceId, "CONTEXT");
-  const sliceContextRel = relSliceFile(base, mid, completedSliceId, "CONTEXT");
 
-  const inlined: string[] = [];
-  inlined.push(await inlineFile(roadmapPath, roadmapRel, "Current Roadmap"));
-  const sliceCtxInline = await inlineFileOptional(sliceContextPath, sliceContextRel, "Slice Context (from discussion)");
-  if (sliceCtxInline) inlined.push(sliceCtxInline);
-  inlined.push(await inlineFile(summaryPath, summaryRel, `${completedSliceId} Summary`));
-  if (inlineLevel !== "minimal") {
-    const projectInline = await inlineProjectFromDb(base);
-    if (projectInline) inlined.push(projectInline);
-    const requirementsInline = await inlineRequirementsFromDb(base, mid, undefined, inlineLevel);
-    if (requirementsInline) inlined.push(requirementsInline);
-    const decisionsInline = await inlineDecisionsFromDb(base, mid, undefined, inlineLevel);
-    if (decisionsInline) inlined.push(decisionsInline);
-  }
-  // Scoped + budgeted — see issue #4719
+  // #4782 phase 2 pilot: reassess-roadmap is the first unit type to
+  // compose its inlined context through the manifest-driven composer.
+  // The resolver below dispatches artifact keys to the existing inline*
+  // helpers, preserving identical output so the migration is
+  // observable-equivalent. Knowledge stays outside the composer (it's
+  // budget-driven, not manifest-driven) until a later phase formalizes
+  // knowledge/memory policies as composer inputs.
+  const resolveArtifact: ArtifactResolver = async (key) => {
+    switch (key) {
+      case "roadmap": {
+        const p = resolveMilestoneFile(base, mid, "ROADMAP");
+        const r = relMilestoneFile(base, mid, "ROADMAP");
+        return await inlineFile(p, r, "Current Roadmap");
+      }
+      case "slice-context": {
+        const p = resolveSliceFile(base, mid, completedSliceId, "CONTEXT");
+        const r = relSliceFile(base, mid, completedSliceId, "CONTEXT");
+        return await inlineFileOptional(p, r, "Slice Context (from discussion)");
+      }
+      case "slice-summary": {
+        const p = resolveSliceFile(base, mid, completedSliceId, "SUMMARY");
+        const r = relSliceFile(base, mid, completedSliceId, "SUMMARY");
+        return await inlineFile(p, r, `${completedSliceId} Summary`);
+      }
+      case "project":
+        if (inlineLevel === "minimal") return null;
+        return await inlineProjectFromDb(base);
+      case "requirements":
+        if (inlineLevel === "minimal") return null;
+        return await inlineRequirementsFromDb(base, mid, undefined, inlineLevel);
+      case "decisions":
+        if (inlineLevel === "minimal") return null;
+        return await inlineDecisionsFromDb(base, mid, undefined, inlineLevel);
+      default:
+        return null;
+    }
+  };
+
+  const composed = await composeInlinedContext("reassess-roadmap", resolveArtifact);
+  const parts: string[] = [];
+  if (composed) parts.push(composed);
+  // Knowledge block stays outside the composer — budgeted, scoped via
+  // keyword extraction (#4719). Future phase folds it in.
   const knowledgeInlineRA = await inlineKnowledgeBudgeted(base, extractKeywords(midTitle));
-  if (knowledgeInlineRA) inlined.push(knowledgeInlineRA);
+  if (knowledgeInlineRA) parts.push(knowledgeInlineRA);
 
-  const inlinedContext = capPreamble(`## Inlined Context (preloaded — do not re-read these files)\n\n${inlined.join("\n\n---\n\n")}`);
+  const inlinedContext = capPreamble(`## Inlined Context (preloaded — do not re-read these files)\n\n${parts.join("\n\n---\n\n")}`);
 
   const assessmentPath = join(base, relSliceFile(base, mid, completedSliceId, "ASSESSMENT"));
 
@@ -2299,7 +2323,7 @@ export async function buildReassessRoadmapPrompt(
     milestoneId: mid,
     milestoneTitle: midTitle,
     completedSliceId,
-    roadmapPath: roadmapRel,
+    roadmapPath: relMilestoneFile(base, mid, "ROADMAP"),
     assessmentPath,
     inlinedContext,
     deferredCaptures,

@@ -44,6 +44,7 @@ export const ARTIFACT_KEYS = [
   "milestone-research",
   "milestone-plan",
   // Slice-scoped
+  "slice-context",
   "slice-research",
   "slice-plan",
   "slice-summary",
@@ -295,16 +296,19 @@ export const UNIT_MANIFESTS: Record<UnitType, UnitContextManifest> = {
   },
   "reassess-roadmap": {
     skills: { mode: "all" },
-    knowledge: "critical-only",
+    knowledge: "scoped",
     memory: "critical-only",
     codebaseMap: false,
     preferences: "none",
     artifacts: {
-      inline: ["roadmap", "slice-summary"],
+      // Phase 2 pilot (#4782): manifest now matches today's actual
+      // buildReassessRoadmapPrompt behavior for equivalence. Phase 3
+      // will tighten this list once the composer reports real telemetry.
+      inline: ["roadmap", "slice-context", "slice-summary", "project", "requirements", "decisions"],
       excerpt: [],
       onDemand: [],
     },
-    maxSystemPromptChars: COMMON_BUDGET_SMALL,
+    maxSystemPromptChars: COMMON_BUDGET_MEDIUM,
   },
 
   // ─── Task-scoped ─────────────────────────────────────────────────────
