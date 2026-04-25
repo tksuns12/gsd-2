@@ -26,6 +26,7 @@ import {
   isMilestoneDepthVerifiedInSnapshot,
 } from '../bootstrap/write-gate.ts';
 
+import { DISPATCH_RULES, type DispatchContext } from '../auto-dispatch.ts';
 import { _setAutoActiveForTest } from '../auto.ts';
 
 // Reset all relevant state before and after each test.
@@ -175,6 +176,71 @@ describe('auto-discuss-milestone-deadlock-4973', () => {
       writeResult.block,
       true,
       'write to CONTEXT.md must still be blocked in interactive mode',
+    );
+  });
+
+  // ── Test 5 ──────────────────────────────────────────────────────────────
+  // The actual fix lives inside the discuss-milestone dispatch rules at
+  // auto-dispatch.ts:280-291, :423-432, :449-458. This test invokes the
+  // "needs-discussion → discuss-milestone" rule directly and asserts that
+  // (a) the rule auto-marks depth-verified when isAutoActive() is true, and
+  // (b) it does NOT mark when isAutoActive() is false.
+  //
+  // This is the test codex flagged as missing: Tests 1-4 above only exercise
+  // the markDepthVerified primitive — they pass on origin/main. This Test 5
+  // FAILS on origin/main (the rule does nothing for the gate) and PASSES with
+  // the fix (the rule calls markDepthVerified inside isAutoActive()).
+  test('Test 5: needs-discussion dispatch rule auto-marks depth-verified in auto-mode', async () => {
+    const rule = DISPATCH_RULES.find(r => r.name === 'needs-discussion → discuss-milestone');
+    assert.ok(rule, 'dispatch rule must exist');
+
+    const baseCtx = {
+      basePath: '/tmp/4973-rule-test-nonexistent',
+      mid: 'M005',
+      midTitle: 'Test Milestone',
+      state: { phase: 'needs-discussion' },
+      prefs: undefined,
+      structuredQuestionsAvailable: 'false',
+    } as unknown as DispatchContext;
+
+    // ── Auto-mode case: the rule must call markDepthVerified ──
+    _setAutoActiveForTest(true);
+    let snap = loadWriteGateSnapshot();
+    assert.strictEqual(
+      isMilestoneDepthVerifiedInSnapshot(snap, 'M005'),
+      false,
+      'precondition: M005 not yet marked',
+    );
+
+    // The rule's match fn calls markDepthVerified(mid) BEFORE awaiting
+    // buildDiscussMilestonePrompt — so even if the prompt build fails because
+    // basePath doesn't exist, the side effect (mark) has already happened.
+    try { await rule!.match(baseCtx); } catch { /* prompt build may fail; we only care about the mark */ }
+
+    snap = loadWriteGateSnapshot();
+    assert.strictEqual(
+      isMilestoneDepthVerifiedInSnapshot(snap, 'M005'),
+      true,
+      'auto-mode: dispatch rule must call markDepthVerified(mid) — this fails on origin/main without the H6 fix',
+    );
+
+    // ── Interactive case: the rule must NOT call markDepthVerified ──
+    clearDiscussionFlowState();
+    _setAutoActiveForTest(false);
+    snap = loadWriteGateSnapshot();
+    assert.strictEqual(
+      isMilestoneDepthVerifiedInSnapshot(snap, 'M005'),
+      false,
+      'precondition: state cleared',
+    );
+
+    try { await rule!.match(baseCtx); } catch { /* prompt build may fail */ }
+
+    snap = loadWriteGateSnapshot();
+    assert.strictEqual(
+      isMilestoneDepthVerifiedInSnapshot(snap, 'M005'),
+      false,
+      'interactive mode: dispatch rule must NOT call markDepthVerified — humans still confirm',
     );
   });
 });

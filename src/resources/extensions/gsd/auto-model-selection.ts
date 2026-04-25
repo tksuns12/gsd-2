@@ -99,7 +99,7 @@ export async function selectAndApplyModel(
   prefs: GSDPreferences | undefined,
   verbose: boolean,
   autoModeStartModel: { provider: string; id: string; flatRateCtx?: FlatRateContext } | null,
-  retryContext?: { isRetry: boolean; previousTier?: string; isDeterministicError?: boolean },
+  retryContext?: { isRetry: boolean; previousTier?: string },
   /** When false (interactive/guided-flow), skip dynamic routing and use the session model.
    *  Dynamic routing only applies in auto-mode where cost optimization is expected. (#3962) */
   isAutoMode = true,
@@ -236,14 +236,14 @@ export async function selectAndApplyModel(
         const availableModelIds = routingEligibleModels.map(m => `${m.provider}/${m.id}`);
 
         // Escalate tier on retry when escalate_on_failure is enabled (default: true).
-        // #4973: Skip escalation entirely for deterministic policy errors — the model
-        // tier is irrelevant because a structural gate (not model quality) caused the
-        // failure. Escalating only wastes money on the same deterministic rejection.
+        // #4973: Deterministic policy errors are short-circuited at the postUnit
+        // level (auto-post-unit.ts writes a placeholder and returns "continue"),
+        // so this code path only runs for legitimate model-quality retries where
+        // tier escalation is the right response.
         if (
           retryContext?.isRetry &&
           retryContext.previousTier &&
-          routingConfig.escalate_on_failure !== false &&
-          !retryContext.isDeterministicError
+          routingConfig.escalate_on_failure !== false
         ) {
           const escalated = escalateTier(retryContext.previousTier as ComplexityTier);
           if (escalated) {

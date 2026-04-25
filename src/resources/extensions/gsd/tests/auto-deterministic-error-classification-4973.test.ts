@@ -329,22 +329,6 @@ describe("Test 6 — non-deterministic failures use standard retry; tier escalat
     );
   });
 
-  test("deterministic error: isDeterministicError flag skips escalation in selectAndApplyModel (type contract)", () => {
-    // Verify the retryContext shape accepted by selectAndApplyModel includes isDeterministicError.
-    // This is a compile-time contract test: if the type is wrong, tsc will error during build.
-    // The value assignment below will fail to typecheck if the field is not declared.
-    type RetryContext = Parameters<
-      typeof import("../auto-model-selection.ts")["selectAndApplyModel"]
-    >[8];
-
-    // Structural check: the type must accept isDeterministicError: true
-    const retryCtx: RetryContext = { isRetry: true, previousTier: "standard", isDeterministicError: true };
-    assert.ok(retryCtx.isDeterministicError === true, "isDeterministicError field accepted in retryContext type");
-
-    // And without it (optional field)
-    const retryCtxMinimal: RetryContext = { isRetry: true, previousTier: "standard" };
-    assert.ok(retryCtxMinimal.isDeterministicError === undefined, "isDeterministicError is optional");
-  });
 });
 
 // Cleanup all temp dirs after the test suite completes
