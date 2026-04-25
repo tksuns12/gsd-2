@@ -545,23 +545,25 @@ export function defaultRoutingConfig(): DynamicRoutingConfig {
 // ─── Tier-Based Model Resolution (for profile defaults) ─────────────────────
 
 /**
- * Fallback-only canonical model IDs per tier. Returned ONLY when the
+ * Fallback-only canonical model IDs per tier. Returned when the
  * available-model list is empty (e.g., preferences are loaded before the
- * model registry is populated at bootstrap). Real resolution paths
- * always pass `availableModelIds` and pick a concrete tier-matching
- * model from that list — these IDs are never written into preferences
- * by themselves when a registry is available.
+ * model registry is populated at bootstrap), or when a non-empty registry has
+ * no model at the requested tier.
  *
  * Precedence (resolveModelForTier):
  *   1. configured `tier_models[tier]` (via getEligibleModels) — exact/bare match
  *   2. cheapest available model whose tier matches `tier`
- *   3. (only if availableModelIds is empty) CANONICAL_TIER_MODELS[tier]
+ *   3. CANONICAL_TIER_MODELS[tier] as last-resort fallback
  */
 const CANONICAL_TIER_MODELS: Record<ComplexityTier, string> = {
   light: "claude-haiku-4-5",
   standard: "claude-sonnet-4-6",
   heavy: "claude-opus-4-6",
 };
+
+export function canonicalModelForTier(tier: ComplexityTier): string {
+  return CANONICAL_TIER_MODELS[tier];
+}
 
 /**
  * Single source of truth for tier-based model selection.
@@ -601,7 +603,7 @@ function findModelForTier(
  * model at the requested tier.
  *
  * Precedence:
- *   1. canonical Anthropic ID for this tier, if directly available
+ *   1. configured `tier_models[tier]`, if provided and available
  *   2. tier-matching model from any provider in `availableModelIds`
  *   3. canonical Anthropic ID as a fallback only when nothing else matches
  *      (or `availableModelIds` is empty, e.g., during early bootstrap)
@@ -610,28 +612,42 @@ function findModelForTier(
  * @param availableModelIds List of available model IDs (REQUIRED for
  *                          provider-agnostic resolution; pass [] only when
  *                          the model registry is genuinely unavailable)
+ * @param routingConfig     Optional routing config, or legacy crossProvider boolean
  * @param crossProvider     Whether to consider models from other providers
  */
 export function resolveModelForTier(
   tier: ComplexityTier,
   availableModelIds: string[],
-  crossProvider = true,
+  crossProvider?: boolean,
+): string;
+export function resolveModelForTier(
+  tier: ComplexityTier,
+  availableModelIds: string[],
+  routingConfig?: DynamicRoutingConfig,
+  crossProvider?: boolean,
+): string;
+export function resolveModelForTier(
+  tier: ComplexityTier,
+  availableModelIds: string[],
+  routingConfigOrCrossProvider: DynamicRoutingConfig | boolean = defaultRoutingConfig(),
+  crossProvider?: boolean,
 ): string {
+  const routingConfig = typeof routingConfigOrCrossProvider === "boolean"
+    ? defaultRoutingConfig()
+    : { ...defaultRoutingConfig(), ...routingConfigOrCrossProvider };
+  const allowCrossProvider = typeof routingConfigOrCrossProvider === "boolean"
+    ? routingConfigOrCrossProvider
+    : crossProvider ?? routingConfig.cross_provider !== false;
+
   // No available models known — return canonical fallback
   if (availableModelIds.length === 0) {
-    return CANONICAL_TIER_MODELS[tier];
-  }
-
-  // Fast path: canonical model directly available
-  const canonical = CANONICAL_TIER_MODELS[tier];
-  if (isModelAvailable(canonical, availableModelIds)) {
-    return canonical;
+    return canonicalModelForTier(tier);
   }
 
   // Cross-provider tier search
   return (
-    findModelForTier(tier, defaultRoutingConfig(), availableModelIds, crossProvider)
-    ?? CANONICAL_TIER_MODELS[tier]
+    findModelForTier(tier, routingConfig, availableModelIds, allowCrossProvider)
+    ?? canonicalModelForTier(tier)
   );
 }
 

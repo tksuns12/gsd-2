@@ -10,7 +10,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { DynamicRoutingConfig } from "./model-router.js";
-import { defaultRoutingConfig, resolveModelForTier } from "./model-router.js";
+import { canonicalModelForTier, defaultRoutingConfig, resolveModelForTier } from "./model-router.js";
 import type { ComplexityTier } from "./complexity-classifier.js";
 import type { TokenProfile, InlineLevel } from "./types.js";
 
@@ -44,7 +44,7 @@ export function resolveModelForUnit(unitType: string): string | undefined {
  * - Extended: `planning: { model: claude-opus-4-6, fallbacks: [glm-5, minimax-m2.5] }`
  */
 export function resolveModelWithFallbacksForUnit(unitType: string): ResolvedModelConfig | undefined {
-  const prefs = loadEffectiveGSDPreferences();
+  const prefs = loadEffectiveGSDPreferences(undefined, { availableModelIds: [] });
   if (!prefs?.preferences.models) return undefined;
   const m = prefs.preferences.models as GSDModelConfigV2;
 
@@ -133,7 +133,7 @@ export function resolveModelWithFallbacksForUnit(unitType: string): ResolvedMode
 export function resolveDefaultSessionModel(
   sessionProvider?: string,
 ): { provider: string; id: string } | undefined {
-  const prefs = loadEffectiveGSDPreferences();
+  const prefs = loadEffectiveGSDPreferences(undefined, { availableModelIds: [] });
   if (!prefs?.preferences.models) return undefined;
 
   const m = prefs.preferences.models as GSDModelConfigV2;
@@ -407,26 +407,32 @@ const PROFILE_TIER_MAP: Record<TokenProfile, Record<string, ComplexityTier>> = {
  * early startup), falls back to canonical Anthropic model IDs.
  *
  * @param profile           The token profile to resolve
- * @param availableModelIds Optional list of available model IDs for cross-provider resolution
+ * @param availableModelIds Optional list of available model IDs for cross-provider resolution.
+ *                          Undefined means the registry is unavailable.
+ * @param routingConfig     Optional routing config for tier model pins.
  */
 export function resolveProfileDefaults(
   profile: TokenProfile,
-  availableModelIds: string[] = [],
+  availableModelIds?: string[],
+  routingConfig: DynamicRoutingConfig = defaultRoutingConfig(),
 ): Partial<GSDPreferences> {
   // burn-max never writes model defaults — preserve user-selected models.
   // For the other three profiles, derive concrete model IDs from the tier map
-  // against the available-model list (provider-agnostic when the registry is
-  // populated, canonical fallback at early bootstrap).
+  // against the available-model list when the registry is provided. If callers
+  // omit the registry entirely, use canonical fallbacks explicitly.
   const tierMap = PROFILE_TIER_MAP[profile];
+  const resolveTierModel = (tier: ComplexityTier): string => Array.isArray(availableModelIds)
+    ? resolveModelForTier(tier, availableModelIds, routingConfig)
+    : canonicalModelForTier(tier);
   const models: GSDModelConfigV2 | undefined = profile === "burn-max"
     ? undefined
     : {
-        planning: resolveModelForTier(tierMap.planning, availableModelIds),
-        research: resolveModelForTier(tierMap.research, availableModelIds),
-        execution: resolveModelForTier(tierMap.execution, availableModelIds),
-        execution_simple: resolveModelForTier(tierMap.execution_simple, availableModelIds),
-        completion: resolveModelForTier(tierMap.completion, availableModelIds),
-        subagent: resolveModelForTier(tierMap.subagent, availableModelIds),
+        planning: resolveTierModel(tierMap.planning),
+        research: resolveTierModel(tierMap.research),
+        execution: resolveTierModel(tierMap.execution),
+        execution_simple: resolveTierModel(tierMap.execution_simple),
+        completion: resolveTierModel(tierMap.completion),
+        subagent: resolveTierModel(tierMap.subagent),
       };
 
   switch (profile) {

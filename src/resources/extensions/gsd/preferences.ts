@@ -179,7 +179,11 @@ export function loadEffectiveGSDPreferences(
   // Explicit user preferences always override profile defaults.
   const profile = result.preferences.token_profile as TokenProfile | undefined;
   if (profile) {
-    const profileDefaults = _resolveProfileDefaults(profile, opts?.availableModelIds);
+    const profileDefaults = _resolveProfileDefaults(
+      profile,
+      opts?.availableModelIds,
+      result.preferences.dynamic_routing,
+    );
     result = {
       ...result,
       preferences: mergePreferences(profileDefaults as GSDPreferences, result.preferences),

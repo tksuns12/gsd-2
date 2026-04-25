@@ -309,6 +309,20 @@ test("resolveModelForTier: returns canonical model when it is available", () => 
   );
 });
 
+test("resolveModelForTier: does not prefer canonical over cheaper same-tier model", () => {
+  const result = resolveModelForTier("light", ["claude-haiku-4-5", "gpt-4o-mini"]);
+  assert.equal(result, "gpt-4o-mini");
+});
+
+test("resolveModelForTier: honors configured tier_models pins", () => {
+  const config: DynamicRoutingConfig = {
+    ...defaultRoutingConfig(),
+    tier_models: { light: "claude-haiku-4-5" },
+  };
+  const result = resolveModelForTier("light", ["claude-haiku-4-5", "gpt-4o-mini"], config);
+  assert.equal(result, "claude-haiku-4-5");
+});
+
 test("resolveModelForTier: picks cross-provider equivalent when Anthropic unavailable", () => {
   // Only OpenAI models available
   const result = resolveModelForTier("heavy", ["gpt-4o", "gpt-4o-mini", "o1"]);
@@ -371,6 +385,19 @@ test("resolveProfileDefaults: budget with only OpenAI models picks gpt-4o-mini f
   // standard-tier slots: planning, execution
   assert.equal(defaults.models?.planning, "gpt-4o");
   assert.equal(defaults.models?.execution, "gpt-4o");
+});
+
+test("resolveProfileDefaults: honors dynamic routing tier_models pins", async () => {
+  const { resolveProfileDefaults } = await import("../preferences-models.js");
+  const defaults = resolveProfileDefaults(
+    "budget",
+    ["claude-haiku-4-5", "gpt-4o-mini", "gpt-4o"],
+    { ...defaultRoutingConfig(), tier_models: { light: "claude-haiku-4-5" } },
+  );
+  assert.equal(defaults.models?.research, "claude-haiku-4-5");
+  assert.equal(defaults.models?.execution_simple, "claude-haiku-4-5");
+  assert.equal(defaults.models?.completion, "claude-haiku-4-5");
+  assert.equal(defaults.models?.subagent, "claude-haiku-4-5");
 });
 
 test("resolveProfileDefaults: empty availableModelIds falls back to canonical Anthropic IDs", async () => {

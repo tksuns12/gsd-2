@@ -107,26 +107,33 @@ test("profile: resolveProfileDefaults exists and handles all 4 tiers", () => {
   );
 });
 
-test("profile: PROFILE_TIER_MAP defines tier intentions for all profiles", () => {
-  assert.ok(
-    preferencesSrc.includes("PROFILE_TIER_MAP"),
-    "PROFILE_TIER_MAP should exist",
+test("profile: PROFILE_TIER_MAP defines tier intentions for all profiles", async () => {
+  const { getProfileTierMap } = await import("../preferences-models.ts");
+  const profileMaps = {
+    budget: getProfileTierMap("budget"),
+    balanced: getProfileTierMap("balanced"),
+    quality: getProfileTierMap("quality"),
+  };
+
+  assert.deepEqual(
+    Object.keys(profileMaps).sort(),
+    ["balanced", "budget", "quality"],
+    "PROFILE_TIER_MAP should include the profile default tiers",
   );
-  // Verify all profiles define all phases as tier names, not model IDs
-  for (const profile of ["budget", "balanced", "quality"]) {
-    assert.ok(
-      preferencesSrc.includes(`${profile}:`),
-      `PROFILE_TIER_MAP should include ${profile}`,
+
+  const expectedPhaseKeys = ["completion", "execution", "execution_simple", "planning", "research", "subagent"];
+  const validTiers = new Set(["light", "standard", "heavy"]);
+  for (const [profile, tierMap] of Object.entries(profileMaps)) {
+    assert.deepEqual(
+      Object.keys(tierMap).sort(),
+      expectedPhaseKeys,
+      `${profile} should define all model-bearing phases`,
     );
+    for (const [phase, tier] of Object.entries(tierMap)) {
+      assert.ok(validTiers.has(tier), `${profile}.${phase} should be a tier name`);
+      assert.ok(!tier.includes("claude-"), `${profile}.${phase} should not be a model ID`);
+    }
   }
-  // No hardcoded Anthropic model IDs in PROFILE_TIER_MAP
-  const tierMapIdx = preferencesSrc.indexOf("PROFILE_TIER_MAP");
-  const tierMapEnd = preferencesSrc.indexOf("};", tierMapIdx);
-  const tierMapBlock = preferencesSrc.slice(tierMapIdx, tierMapEnd);
-  assert.ok(
-    !tierMapBlock.includes("claude-"),
-    "PROFILE_TIER_MAP should use tier names, not hardcoded model IDs",
-  );
 });
 
 test("profile: resolveProfileDefaults is provider-agnostic — picks OpenAI when only OpenAI is available", async () => {
