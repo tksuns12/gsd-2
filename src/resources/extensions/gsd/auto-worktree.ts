@@ -990,6 +990,12 @@ export function autoWorktreeBranch(milestoneId: string): string {
   return `milestone/${milestoneId}`;
 }
 
+function normalizeLocalBranchRef(branch: string): string {
+  return branch.startsWith("refs/heads/")
+    ? branch.slice("refs/heads/".length)
+    : branch;
+}
+
 // ─── Branch-mode Entry ─────────────────────────────────────────────────────
 
 /**
@@ -1677,7 +1683,7 @@ export function mergeMilestoneToMain(
   // check (#1792) collapse to a false success, and the worktree-resolver
   // emits worktree-merged for work that never landed on a distinct
   // integration branch.
-  if (mainBranch === milestoneBranch) {
+  if (normalizeLocalBranchRef(mainBranch) === milestoneBranch) {
     process.chdir(previousCwd);
     throw new GSDError(
       GSD_GIT_ERROR,

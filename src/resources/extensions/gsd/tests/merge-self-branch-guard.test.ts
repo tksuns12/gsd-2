@@ -42,7 +42,7 @@ function createTempRepo(): string {
   return dir;
 }
 
-test("mergeMilestoneToMain refuses to self-merge when integration branch == milestone branch (#5024)", () => {
+function assertSelfMergeRefIsRejected(recordedIntegrationBranch: string): void {
   const savedCwd = process.cwd();
   let tempDir = "";
 
@@ -65,7 +65,7 @@ test("mergeMilestoneToMain refuses to self-merge when integration branch == mile
     mkdirSync(msDir, { recursive: true });
     writeFileSync(
       join(msDir, "M001-META.json"),
-      JSON.stringify({ integrationBranch: "milestone/M001" }),
+      JSON.stringify({ integrationBranch: recordedIntegrationBranch }),
     );
     git(["add", "."], tempDir);
     git(["commit", "-m", "chore: plant corrupt M001 meta"], tempDir);
@@ -113,4 +113,12 @@ test("mergeMilestoneToMain refuses to self-merge when integration branch == mile
     }
     rmSync(fakeHome, { recursive: true, force: true });
   }
+}
+
+test("mergeMilestoneToMain refuses exact milestone branch self-merge metadata (#5024)", () => {
+  assertSelfMergeRefIsRejected("milestone/M001");
+});
+
+test("mergeMilestoneToMain refuses refs/heads milestone branch self-merge metadata (#5024)", () => {
+  assertSelfMergeRefIsRejected("refs/heads/milestone/M001");
 });
