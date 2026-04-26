@@ -46,6 +46,11 @@ import {
   resolveGitHeadPath,
   nudgeGitBranchCache,
 } from "./worktree.js";
+import {
+  isGsdWorktreePath,
+  normalizeWorktreePathForCompare,
+  resolveWorktreeProjectRoot,
+} from "./worktree-root.js";
 import { MergeConflictError, readIntegrationBranch, RUNTIME_EXCLUSION_PATHS } from "./git-service.js";
 import { debugLog } from "./debug-logger.js";
 import { logWarning, logError } from "./workflow-logger.js";
@@ -1196,6 +1201,8 @@ export function createAutoWorktree(
   basePath: string,
   milestoneId: string,
 ): string {
+  basePath = resolveWorktreeProjectRoot(basePath);
+
   // Check if repo has commits — git worktree requires a valid HEAD
   try {
     execFileSync("git", ["rev-parse", "--verify", "HEAD"], { cwd: basePath, stdio: "pipe" });
@@ -1355,6 +1362,8 @@ export function teardownAutoWorktree(
   milestoneId: string,
   opts: { preserveBranch?: boolean } = {},
 ): void {
+  originalBasePath = resolveWorktreeProjectRoot(originalBasePath);
+
   const branch = autoWorktreeBranch(milestoneId);
   const { preserveBranch = false } = opts;
   const previousCwd = process.cwd();
@@ -1406,16 +1415,28 @@ export function teardownAutoWorktree(
 
 /**
  * Detect if the process is currently inside an auto-worktree.
- * Checks both module state and git branch prefix.
+ * Uses the current directory structure plus git branch prefix so detection
+ * still works after process restart when module state has been reset.
  */
 export function isInAutoWorktree(basePath: string): boolean {
-  if (!originalBase) return false;
   const cwd = process.cwd();
-  const resolvedBase = existsSync(basePath) ? realpathSync(basePath) : basePath;
-  const wtDir = join(resolvedBase, ".gsd", "worktrees");
-  if (!cwd.startsWith(wtDir)) return false;
-  const branch = nativeGetCurrentBranch(cwd);
-  return branch.startsWith("milestone/");
+  if (!isGsdWorktreePath(cwd)) return false;
+
+  const projectRoot = resolveWorktreeProjectRoot(basePath, originalBase);
+  const cwdProjectRoot = resolveWorktreeProjectRoot(cwd, originalBase);
+  if (
+    normalizeWorktreePathForCompare(projectRoot) !==
+    normalizeWorktreePathForCompare(cwdProjectRoot)
+  ) {
+    return false;
+  }
+
+  try {
+    const branch = nativeGetCurrentBranch(cwd);
+    return branch.startsWith("milestone/");
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -1430,6 +1451,8 @@ export function getAutoWorktreePath(
   basePath: string,
   milestoneId: string,
 ): string | null {
+  basePath = resolveWorktreeProjectRoot(basePath);
+
   const p = worktreePath(basePath, milestoneId);
   if (!existsSync(p)) return null;
 
@@ -1458,6 +1481,8 @@ export function enterAutoWorktree(
   basePath: string,
   milestoneId: string,
 ): string {
+  basePath = resolveWorktreeProjectRoot(basePath);
+
   const p = worktreePath(basePath, milestoneId);
   if (!existsSync(p)) {
     throw new GSDError(
@@ -1512,6 +1537,10 @@ export function enterAutoWorktree(
  */
 export function getAutoWorktreeOriginalBase(): string | null {
   return originalBase;
+}
+
+export function _resetAutoWorktreeOriginalBaseForTests(): void {
+  originalBase = null;
 }
 
 export function getActiveAutoWorktreeContext(): {
