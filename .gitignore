@@ -64,7 +64,7 @@ dist/
 .bg_shell
 .gsd*.tgz
 .artifacts/
-/AGENTS.md
+AGENTS.md
 .bg-shell/
 TODOS.md
 .planning/

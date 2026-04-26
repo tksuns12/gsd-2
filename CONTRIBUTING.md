@@ -4,8 +4,6 @@ We're glad you're here. GSD-2 is an open project and contributions are welcome a
 
 Read [VISION.md](VISION.md) before contributing. It defines what GSD-2 is, what it isn't, and what we won't accept.
 
-If you (or your AI agent) are working on this codebase, also read [docs/AGENTS.md](docs/AGENTS.md) — it lists the 13 bundled subagents and 35 skills that already cover most common tasks (recon, planning, review, refactor, security, doc writing, testing). Reach for those before doing the work by hand.
-
 ## Before you start
 
 1. **Check existing issues.** Someone may already be working on it.

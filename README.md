@@ -676,44 +676,15 @@ GSD ships with 24 extensions, all loaded automatically:
 
 ### Bundled Agents
 
-Thirteen specialist subagents for delegated work, discovered from `src/resources/agents/`. Project-scoped overrides go in `.gsd/agents/`. See [docs/AGENTS.md](docs/AGENTS.md) for dispatch rules and `conflicts_with` semantics.
+Five specialized subagents for delegated work:
 
-**Core**
-
-| Agent          | Role                                                                  |
-| -------------- | --------------------------------------------------------------------- |
-| **Scout**      | Fast codebase recon — returns compressed context for handoff          |
-| **Researcher** | Web research — finds and synthesizes current information              |
-| **Worker**     | General-purpose execution in an isolated context window               |
-| **Planner**    | Architecture and implementation plans — outputs plans, not code       |
-
-**Specialists**
-
-| Agent              | Role                                                                       |
-| ------------------ | -------------------------------------------------------------------------- |
-| **Debugger**       | Hypothesis-driven bug investigation with root-cause analysis               |
-| **Reviewer**       | Structured code review with severity ratings and actionable fixes          |
-| **Refactorer**     | Safe transformations — extract, inline, rename, simplify                   |
-| **Tester**         | Test writing, fixing, and coverage gap identification                      |
-| **Security**      | OWASP audit, dependency risks, and secrets detection                       |
-| **Doc Writer**     | API docs, inline comments, READMEs, ADR drafting support                   |
-| **Git Ops**        | Conflict resolution, rebase strategy, PR prep, changelog generation        |
-| **JavaScript Pro** | Modern JavaScript specialist — ES2023+, async, perf-critical paths         |
-| **TypeScript Pro** | Advanced TypeScript — generics, type-level programming, monorepo refs      |
-
-### Bundled Skills
-
-Thirty-five skills ship with GSD-2 under `src/resources/skills/` — reusable instruction packs for common workflows. Highlights:
-
-| Category   | Skills                                                                                                                              |
-| ---------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| Process    | `tdd`, `verify-before-complete`, `handoff`, `decompose-into-slices`, `write-milestone-brief`, `spike-wrap-up`, `grill-me`           |
-| Quality    | `review`, `security-review`, `code-optimizer`, `lint`, `forensics`, `debug-like-expert`, `dependency-upgrade`                       |
-| Frontend   | `frontend-design`, `accessibility`, `core-web-vitals`, `react-best-practices`, `web-design-guidelines`, `web-quality-audit`         |
-| Testing    | `test`, `observability`, `github-workflows`, `api-design`                                                                           |
-| Authoring  | `create-gsd-extension`, `create-mcp-server`, `create-skill`, `create-workflow`, `agent-browser`, `write-docs`                       |
-
-Full list and dispatch rules: [docs/AGENTS.md](docs/AGENTS.md).
+| Agent              | Role                                                         |
+| ------------------ | ------------------------------------------------------------ |
+| **Scout**          | Fast codebase recon — returns compressed context for handoff |
+| **Researcher**     | Web research — finds and synthesizes current information     |
+| **Worker**         | General-purpose execution in an isolated context window      |
+| **JavaScript Pro** | JavaScript-specialized execution and debugging               |
+| **TypeScript Pro** | TypeScript-specialized execution and debugging               |
 
 ---
 
