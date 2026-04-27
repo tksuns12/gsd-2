@@ -273,6 +273,9 @@ export class AgentSession {
 	private _extensionRunner: ExtensionRunner | undefined = undefined;
 	private _turnIndex = 0;
 	private _processingAgentEnd = false;
+	/** True while newSession()/switchSession() is in progress; signals agent_end
+	 * post-handlers to bail rather than corrupt new-session state. */
+	private _sessionSwitchPending = false;
 	private _processingQueuedAgentEnd = false;
 	private _sessionTransitionStartedDuringAgentEnd = false;
 
@@ -510,6 +513,13 @@ export class AgentSession {
 
 		// Check auto-retry and auto-compaction after agent completes
 		if (event.type === "agent_end" && this._lastAssistantMessage) {
+			// A session transition started during agent_end handler execution -
+			// bail to avoid running retry/compaction against new-session state.
+			if (this._sessionSwitchPending) {
+				this._lastAssistantMessage = undefined;
+				return;
+			}
+
 			const msg = this._lastAssistantMessage;
 			this._lastAssistantMessage = undefined;
 
@@ -1597,12 +1607,13 @@ export class AgentSession {
 
 	private async _settleCurrentTurnForSessionTransition(): Promise<void> {
 		if (this._processingAgentEnd) {
-			// RPC waitForIdle() waits for the next agent_end event (60s timeout).
-			// During agent_end handlers the agent may already be idle; only wait if
-			// a stream is still in flight to avoid an unnecessary timeout.
-			if (this.isStreaming) {
-				await this.agent.waitForIdle();
-			}
+			// Wait for the agent to fully settle. When called from inside an
+			// agent_end extension handler, the agent may already be idle - but
+			// _processAgentEvent still has retry/compaction tail work to run after
+			// _emitExtensionEvent returns. waitForIdle() is effectively a no-op when
+			// already idle, so awaiting it unconditionally is safe and ensures we
+			// don't proceed into the session reset while that tail is still on the stack.
+			await this.agent.waitForIdle();
 
 			if (this._processingQueuedAgentEnd) {
 				this._sessionTransitionStartedDuringAgentEnd = true;
@@ -1646,18 +1657,23 @@ export class AgentSession {
 			}
 		}
 
-		await this._settleCurrentTurnForSessionTransition();
+		this._sessionSwitchPending = true;
+		try {
+			await this._settleCurrentTurnForSessionTransition();
 
-		// #3731: If the caller aborted (e.g. runUnit() timed out and restored cwd to
-		// project root), discard this session before capturing process.cwd() and
-		// rebuilding the tool runtime. Without this check, the late newSession()
-		// would rebuild tools with root cwd, breaking worktree isolation.
-		if (options?.abortSignal?.aborted) {
-			return false;
+			// #3731: If the caller aborted (e.g. runUnit() timed out and restored cwd to
+			// project root), discard this session before capturing process.cwd() and
+			// rebuilding the tool runtime. Without this check, the late newSession()
+			// would rebuild tools with root cwd, breaking worktree isolation.
+			if (options?.abortSignal?.aborted) {
+				return false;
+			}
+
+			this._disconnectFromAgent();
+			this.agent.reset();
+		} finally {
+			this._sessionSwitchPending = false;
 		}
-
-		this._disconnectFromAgent();
-		this.agent.reset();
 		// Update cwd to current process directory — auto-mode may have chdir'd
 		// into a worktree since the original session was created.
 		const previousCwd = this._cwd;
@@ -2508,8 +2524,13 @@ export class AgentSession {
 			}
 		}
 
-		await this._settleCurrentTurnForSessionTransition();
-		this._disconnectFromAgent();
+		this._sessionSwitchPending = true;
+		try {
+			await this._settleCurrentTurnForSessionTransition();
+			this._disconnectFromAgent();
+		} finally {
+			this._sessionSwitchPending = false;
+		}
 		this._steeringMessages = [];
 		this._followUpMessages = [];
 		this._pendingNextTurnMessages = [];

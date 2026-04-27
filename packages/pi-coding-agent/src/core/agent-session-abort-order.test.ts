@@ -173,7 +173,7 @@ describe("#4243 — abort() must run before _disconnectFromAgent()", () => {
 		assert.equal(order.includes("abort"), false);
 	});
 
-	it("newSession() skips waitForIdle during agent_end processing once already idle", async () => {
+	it("newSession() waits during agent_end processing even once already idle", async () => {
 		const session = await createSession();
 		const order: string[] = [];
 
@@ -193,7 +193,7 @@ describe("#4243 — abort() must run before _disconnectFromAgent()", () => {
 
 		const ok = await session.newSession();
 		assert.equal(ok, true);
-		assert.deepEqual(order, ["_disconnectFromAgent"]);
+		assert.deepEqual(order, ["waitForIdle", "_disconnectFromAgent"]);
 		assert.equal(order.includes("abort"), false);
 	});
 
@@ -361,6 +361,7 @@ describe("#4243 — abort() must run before _disconnectFromAgent()", () => {
 		assert.equal(compactionChecks, 0);
 		assert.equal(listenerAgentEnds, 0);
 		assert.equal((session as any)._lastAssistantMessage, undefined);
+		assert.equal((session as any)._sessionSwitchPending, false);
 		assert.equal((session as any)._sessionTransitionStartedDuringAgentEnd, false);
 	});
 
@@ -395,7 +396,33 @@ describe("#4243 — abort() must run before _disconnectFromAgent()", () => {
 		assert.equal(compactionChecks, 0);
 		assert.equal(listenerAgentEnds, 0);
 		assert.equal((session as any)._lastAssistantMessage, undefined);
+		assert.equal((session as any)._sessionSwitchPending, false);
 		assert.equal((session as any)._sessionTransitionStartedDuringAgentEnd, false);
+	});
+
+	it("agent_end post-handlers bail while a session switch is pending", async () => {
+		const session = await createSession();
+		const assistantMessage = makeAssistantMessage("old pending response");
+		let compactionChecks = 0;
+		let listenerAgentEnds = 0;
+
+		(session as any)._lastAssistantMessage = assistantMessage;
+		(session as any)._sessionSwitchPending = true;
+		(session as any)._compactionOrchestrator.checkCompaction = async () => {
+			compactionChecks++;
+		};
+		session.subscribe((event: any) => {
+			if (event.type === "agent_end") listenerAgentEnds++;
+		});
+
+		await (session as any)._processAgentEvent({
+			type: "agent_end",
+			messages: [assistantMessage],
+		});
+
+		assert.equal(compactionChecks, 0);
+		assert.equal(listenerAgentEnds, 1);
+		assert.equal((session as any)._lastAssistantMessage, undefined);
 	});
 
 	it("switchSession() invokes abort() before _disconnectFromAgent()", async () => {
