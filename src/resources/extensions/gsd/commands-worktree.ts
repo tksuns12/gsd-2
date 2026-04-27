@@ -181,15 +181,6 @@ async function handleMerge(args: string, ctx: ExtensionCommandContext): Promise<
 
   try {
     mergeWorktreeToMain(basePath, target, commitMessage);
-    removeWorktree(basePath, target, { deleteBranch: true });
-    ctx.ui.notify(
-      [
-        `Merged ${target} → ${mainBranch}`,
-        `  ${status.filesChanged} file${status.filesChanged === 1 ? "" : "s"}, +${status.linesAdded} -${status.linesRemoved}`,
-        `  commit: ${commitMessage.split("\n")[0]}`,
-      ].join("\n"),
-      "info",
-    );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (err instanceof GSDError && err.code === GSD_GIT_ERROR) {
@@ -203,6 +194,29 @@ async function handleMerge(args: string, ctx: ExtensionCommandContext): Promise<
         "error",
       );
     }
+    return;
+  }
+
+  const successLines = [
+    `Merged ${target} → ${mainBranch}`,
+    `  ${status.filesChanged} file${status.filesChanged === 1 ? "" : "s"}, +${status.linesAdded} -${status.linesRemoved}`,
+    `  commit: ${commitMessage.split("\n")[0]}`,
+  ];
+
+  try {
+    removeWorktree(basePath, target, { deleteBranch: true });
+    ctx.ui.notify(successLines.join("\n"), "info");
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const cleanupLines = [
+      ...successLines,
+      "",
+      `Cleanup failed after the merge succeeded: ${msg}`,
+      err instanceof GSDError && err.code === GSD_GIT_ERROR
+        ? `Switch to ${mainBranch} (e.g. 'git checkout ${mainBranch}'), then remove the worktree manually with /gsd worktree remove ${target} --force.`
+        : `Remove the worktree manually with /gsd worktree remove ${target} --force, or run 'git worktree prune' to clean up dangling registrations.`,
+    ];
+    ctx.ui.notify(cleanupLines.join("\n"), "warning");
   }
 }
 
@@ -231,7 +245,11 @@ async function handleClean(ctx: ExtensionCommandContext): Promise<void> {
     } else {
       const reason = !status.exists
         ? "directory missing — run 'git worktree prune' to unregister"
-        : `${status.filesChanged} changed file${status.filesChanged === 1 ? "" : "s"}`;
+        : status.uncommitted && status.filesChanged > 0
+          ? `has uncommitted changes and ${status.filesChanged} changed file${status.filesChanged === 1 ? "" : "s"}`
+          : status.uncommitted
+            ? "has uncommitted changes"
+            : `${status.filesChanged} changed file${status.filesChanged === 1 ? "" : "s"}`;
       kept.push(`${wt.name} (${reason})`);
     }
   }

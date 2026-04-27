@@ -53,7 +53,7 @@ test("unmerged worktree shows (unmerged) badge with diff stats", () => {
     }),
   ]);
   assert.match(out, /feature-y \(unmerged\)/);
-  assert.match(out, /3 files, \+42 -7, 2 commits/);
+  assert.match(out, /\bdiff\s+3 files, \+42 -7, 2 commits\b/);
 });
 
 test("singular file/commit pluralization", () => {
@@ -66,7 +66,7 @@ test("singular file/commit pluralization", () => {
       commits: 1,
     }),
   ]);
-  assert.match(out, /1 file, \+1 -0, 1 commit/);
+  assert.match(out, /\bdiff\s+1 file, \+1 -0, 1 commit\b/);
 });
 
 test("count header matches number of worktrees", () => {
