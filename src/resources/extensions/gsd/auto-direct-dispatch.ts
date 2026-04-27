@@ -30,6 +30,8 @@ import {
 import { loadEffectiveGSDPreferences } from "./preferences.js";
 import type { MinimalModelRegistry } from "./context-budget.js";
 import { pauseAuto } from "./auto.js";
+import { resolveCanonicalMilestoneRoot } from "./worktree-manager.js";
+import { logWarning } from "./workflow-logger.js";
 import {
   getWorkflowTransportSupportError,
   getRequiredWorkflowToolsForAutoUnit,
@@ -49,6 +51,12 @@ export async function dispatchDirectPhase(
     ctx.ui.notify("Cannot dispatch: no active milestone.", "warning");
     return;
   }
+
+  // Switch the dispatch base to the canonical milestone worktree if one
+  // exists. Without this, /gsd dispatch invoked from the project root would
+  // build prompts and create a session anchored to the project root even
+  // though the milestone's actual code lives in the worktree.
+  base = resolveCanonicalMilestoneRoot(base, mid);
 
   const normalized = phase.toLowerCase();
   let unitType: string;
@@ -277,6 +285,17 @@ export async function dispatchDirectPhase(
   }
 
   ctx.ui.notify(`Dispatching ${unitType} for ${unitId}...`, "info");
+
+  // Ensure cwd matches base BEFORE newSession() captures it. Synchronous —
+  // no awaits between chdir and newSession.
+  try {
+    if (process.cwd() !== base) {
+      process.chdir(base);
+    }
+  } catch (err) {
+    logWarning("engine", `chdir failed before direct-dispatch newSession: ${err instanceof Error ? err.message : String(err)}`, { file: "auto-direct-dispatch.ts" });
+  }
+
   const result = await ctx.newSession();
   if (result.cancelled) {
     ctx.ui.notify("Session creation cancelled.", "warning");

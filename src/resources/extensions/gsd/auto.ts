@@ -1883,6 +1883,14 @@ export async function dispatchHookUnit(
     startedAt: hookStartedAt,
   };
 
+  // Ensure cwd matches basePath BEFORE newSession() captures it (#1389).
+  // newSession() snapshots process.cwd() during construction; chdir-ing
+  // afterward leaves the session rooted to whatever cwd was when the call
+  // was made. Must be synchronous — no awaits between chdir and newSession.
+  try { if (process.cwd() !== s.basePath) process.chdir(s.basePath); } catch (err) {
+    logWarning("engine", `chdir failed before hook newSession: ${err instanceof Error ? err.message : String(err)}`, { file: "auto.ts" });
+  }
+
   const result = await s.cmdCtx!.newSession();
   if (result.cancelled) {
     await stopAuto(ctx, pi);
@@ -1938,11 +1946,6 @@ export async function dispatchHookUnit(
 
   ctx.ui.setStatus("gsd-auto", s.stepMode ? "next" : "auto");
   ctx.ui.notify(`Running post-unit hook: ${hookName}`, "info");
-
-  // Ensure cwd matches basePath before hook dispatch (#1389)
-  try { if (process.cwd() !== s.basePath) process.chdir(s.basePath); } catch (err) {
-    logWarning("engine", `chdir failed before hook dispatch: ${err instanceof Error ? err.message : String(err)}`, { file: "auto.ts" });
-  }
 
   debugLog("dispatchHookUnit", {
     phase: "send-message",
