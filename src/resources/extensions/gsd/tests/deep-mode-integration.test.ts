@@ -267,6 +267,36 @@ test("integration: deep mode + decision=research + research files missing → re
   }
 });
 
+test("integration: deep mode + decision=research + dimension blocker → discuss-milestone", async (t) => {
+  const base = makeIsolatedBase();
+  t.after(() => { try { rmSync(base, { recursive: true, force: true }); } catch {} });
+
+  writePreferences(base);
+  writeValidProject(base);
+  writeValidRequirements(base);
+  mkdirSync(join(base, ".gsd", "runtime"), { recursive: true });
+  writeFileSync(
+    join(base, ".gsd", "runtime", "research-decision.json"),
+    JSON.stringify({ decision: "research" }),
+  );
+  mkdirSync(join(base, ".gsd", "research"), { recursive: true });
+  for (const name of ["STACK.md", "FEATURES.md", "ARCHITECTURE.md"]) {
+    writeFileSync(join(base, ".gsd", "research", name), "# done\n");
+  }
+  writeFileSync(join(base, ".gsd", "research", "PITFALLS-BLOCKER.md"), "# blocker\n");
+
+  const prefs = { planning_depth: "deep" } as GSDPreferences;
+  const result = await resolveDispatch(makeCtx(base, prefs, "needs-discussion"));
+  assert.strictEqual(result.action, "dispatch");
+  if (result.action === "dispatch") {
+    assert.strictEqual(
+      result.unitType,
+      "discuss-milestone",
+      "a dimension blocker should clear the project research gate",
+    );
+  }
+});
+
 test("integration: deep mode + decision=skip → falls through to discuss-milestone in needs-discussion", async (t) => {
   const base = makeIsolatedBase();
   t.after(() => { try { rmSync(base, { recursive: true, force: true }); } catch {} });

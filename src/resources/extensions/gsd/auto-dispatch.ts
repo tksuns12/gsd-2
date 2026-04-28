@@ -118,6 +118,21 @@ export interface DispatchRule {
   match: (ctx: DispatchContext) => Promise<DispatchAction | null>;
 }
 
+const PROJECT_RESEARCH_DIMENSIONS = ["STACK", "FEATURES", "ARCHITECTURE", "PITFALLS"] as const;
+
+function isProjectResearchDimensionSatisfied(researchDir: string, name: string): boolean {
+  return (
+    existsSync(join(researchDir, `${name}.md`)) ||
+    existsSync(join(researchDir, `${name}-BLOCKER.md`))
+  );
+}
+
+function isProjectResearchComplete(researchDir: string): boolean {
+  return PROJECT_RESEARCH_DIMENSIONS.every((name) =>
+    isProjectResearchDimensionSatisfied(researchDir, name),
+  );
+}
+
 async function readUatGateVerdict(
   basePath: string,
   mid: string,
@@ -210,12 +225,7 @@ function hasPendingDeepStage(prefs: GSDPreferences | undefined, basePath: string
     if (decision !== "research" && decision !== "skip") return true;
     if (decision === "research") {
       const researchDir = join(root, "research");
-      const allFilesExist =
-        existsSync(join(researchDir, "STACK.md")) &&
-        existsSync(join(researchDir, "FEATURES.md")) &&
-        existsSync(join(researchDir, "ARCHITECTURE.md")) &&
-        existsSync(join(researchDir, "PITFALLS.md"));
-      if (!allFilesExist) return true;
+      if (!isProjectResearchComplete(researchDir)) return true;
     }
   } catch {
     return true; // malformed — research-decision rule will re-ask
@@ -678,12 +688,7 @@ export const DISPATCH_RULES: DispatchRule[] = [
       }
       if (decision !== "research") return null; // user picked "skip" — fall through
       const researchDir = join(gsdRoot(basePath), "research");
-      const allFilesExist =
-        existsSync(join(researchDir, "STACK.md")) &&
-        existsSync(join(researchDir, "FEATURES.md")) &&
-        existsSync(join(researchDir, "ARCHITECTURE.md")) &&
-        existsSync(join(researchDir, "PITFALLS.md"));
-      if (allFilesExist) return null; // already done — fall through
+      if (isProjectResearchComplete(researchDir)) return null; // already done — fall through
       // Idempotency guard: one orchestrator owns the project research fan-out
       // until guided-research-project.md deletes this marker during closeout.
       const runtimeDir = join(gsdRoot(basePath), "runtime");

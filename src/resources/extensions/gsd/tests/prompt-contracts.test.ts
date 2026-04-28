@@ -76,6 +76,35 @@ test("guided milestone discussion scopes depth verification to the milestone id"
   assert.doesNotMatch(prompt, /depth_verification_confirm" — this enables the write-gate downstream/i, "legacy global depth gate wording should be gone");
 });
 
+test("guided requirements prompt requires milestone-qualified provisional owners", () => {
+  const prompt = readPrompt("guided-discuss-requirements");
+  assert.match(prompt, /M###\/none yet/, "unsliced requirements should retain milestone ownership");
+  assert.match(prompt, /never bare `none yet`/, "prompt should forbid bare provisional ownership");
+  assert.doesNotMatch(prompt, /primary owning slice \(or `none yet`\)/i);
+});
+
+test("guided requirements prompt saves requirement records before final summary write", () => {
+  const prompt = readPrompt("guided-discuss-requirements");
+  const output = prompt.slice(prompt.indexOf("## Output"));
+  const requirementSaveIndex = output.indexOf("gsd_requirement_save");
+  const summarySaveIndex = output.indexOf("gsd_summary_save");
+
+  assert.ok(requirementSaveIndex >= 0, "output instructions should call gsd_requirement_save");
+  assert.ok(summarySaveIndex >= 0, "output instructions should call gsd_summary_save");
+  assert.ok(
+    requirementSaveIndex < summarySaveIndex,
+    "DB-backed requirement records should be saved before writing REQUIREMENTS.md",
+  );
+});
+
+test("guided research decision prompt keeps exact chat confirmation strings", () => {
+  const prompt = readPrompt("guided-research-decision");
+  assert.match(prompt, /Research decision: research/);
+  assert.match(prompt, /Research decision recorded\./);
+  assert.match(prompt, /Do not change the required confirmation strings/i);
+  assert.doesNotMatch(prompt, /note the inference in the chat confirmation line/i);
+});
+
 test("queue prompt requires waiting for user response between rounds", () => {
   const prompt = readPrompt("queue");
   assert.match(prompt, /Never fabricate or simulate user input during this discussion/i);

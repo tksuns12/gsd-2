@@ -78,7 +78,7 @@ Ask **1–3 questions per round**. Each round targets one dimension:
 - Listing every conceivable feature ("requirement inflation")
 - Vague verbs ("Handle", "Support") — push for "User can X" or "System emits Y when Z"
 - Skipping anti-features — explicit out-of-scope is part of the contract
-- Mapping requirements to slices that don't exist yet — use `M###/none yet` instead
+- Mapping requirements to slices that don't exist yet — use `M###/none yet` with the milestone id required
 
 ---
 
@@ -88,7 +88,7 @@ Before the wrap-up gate, verify:
 
 - [ ] Every milestone in PROJECT.md has at least one Active requirement
 - [ ] Core Value (from PROJECT.md) is covered by at least one Active requirement
-- [ ] Each Active requirement has: ID, title, class, status, description, why-it-matters, source, primary owning slice (or `none yet`), validation, notes
+- [ ] Each Active requirement has: ID, title, class, status, description, why-it-matters, source, primary owner (`M###/S##` or `M###/none yet`; never bare `none yet`), validation, notes
 - [ ] At least one explicit Out of Scope entry per major capability area (anti-features captured)
 - [ ] Quality attributes (performance, reliability, etc.) captured where the user has stated thresholds
 - [ ] No requirement is implementation-flavored ("button", "endpoint", "table") — all are capability-flavored
@@ -115,10 +115,10 @@ If they adjust, absorb and re-verify.
 
 Once the user confirms:
 
-1. Use the **Requirements** output template (inlined above).
-2. Call `gsd_summary_save` with `artifact_type: "REQUIREMENTS"` and the full markdown as `content` — the tool writes `.gsd/REQUIREMENTS.md` and persists to DB.
-3. The file MUST contain all five required sections: `## Active`, `## Validated`, `## Deferred`, `## Out of Scope`, `## Traceability`, `## Coverage Summary`. Empty sections are OK; missing sections are not.
-4. Every entry must conform to the `R###` format with all listed fields. Use `gsd_requirement_save` (NOT plain file edit) for each requirement so DB and file stay consistent.
+1. Use the **Requirements** output template (inlined above) to render the final markdown in working memory.
+2. Every entry must conform to the `R###` format with all listed fields. Use `gsd_requirement_save` (NOT plain file edit) for each requirement so DB state is saved first.
+3. After all `gsd_requirement_save` calls complete, call `gsd_summary_save` with `artifact_type: "REQUIREMENTS"` and the full rendered markdown as `content` — this is the final `.gsd/REQUIREMENTS.md` write path.
+4. The file MUST contain all required sections: `## Active`, `## Validated`, `## Deferred`, `## Out of Scope`, `## Traceability`, `## Coverage Summary`. Empty sections are OK; missing sections are not.
 5. Print the final coverage summary in chat: `Active: N | Validated: N | Deferred: N | Out of Scope: N | Mapped to slices: N | Unmapped active: N`.
 6. {{commitInstruction}}
 7. Say exactly: `"Requirements written."` — nothing else.

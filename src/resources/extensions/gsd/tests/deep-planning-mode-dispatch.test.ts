@@ -462,6 +462,22 @@ test("Deep mode: research-project does NOT dispatch when all 4 research files ex
   assert.strictEqual(result, null, "all research files present — fall through");
 });
 
+test("Deep mode: research-project treats a dimension BLOCKER as terminal", async (t) => {
+  const base = makeIsolatedBase();
+  t.after(() => { try { rmSync(base, { recursive: true, force: true }); } catch {} });
+
+  setupReadyForResearchProject(base);
+  mkdirSync(join(base, ".gsd", "research"), { recursive: true });
+  for (const name of ["STACK.md", "FEATURES.md", "ARCHITECTURE.md"]) {
+    writeFileSync(join(base, ".gsd", "research", name), "# done\n");
+  }
+  writeFileSync(join(base, ".gsd", "research", "PITFALLS-BLOCKER.md"), "# blocker\n");
+
+  const prefs = { planning_depth: "deep" } as GSDPreferences;
+  const result = await rule(RESEARCH_PROJECT_RULE_NAME).match(makeCtx(base, prefs));
+  assert.strictEqual(result, null, "dimension blocker files must satisfy project research");
+});
+
 test("Deep mode: research-project DOES dispatch when only 3 of 4 research files exist", async (t) => {
   const base = makeIsolatedBase();
   t.after(() => { try { rmSync(base, { recursive: true, force: true }); } catch {} });

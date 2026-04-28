@@ -50,6 +50,7 @@ Once the answer is captured:
    ```
    - Use `"research"` if the user picked "Yes" or answered yes/y in plain text
    - Use `"skip"` if the user picked "Skip" or answered no/n
+   - Optional for ambiguous or "Other / let me explain" answers: add an `inference_note` field to the JSON. Do not put inference text in chat.
 3. Print a one-line confirmation in chat: `Research decision: research` or `Research decision: skip`
 4. Say exactly: `"Research decision recorded."` — nothing else.
 
@@ -60,4 +61,4 @@ Once the answer is captured:
 - One question, one turn, write file, done. No follow-ups.
 - Do NOT actually run research in this stage — that's a separate dispatch unit (`research-project`) that fires only if the decision is `research`.
 - Do NOT call `ask_user_questions` more than once per turn.
-- If the user picks "Other / let me explain" or gives an ambiguous freeform answer, treat it as "research" (the recommended choice) and note the inference in the chat confirmation line.
+- If the user picks "Other / let me explain" or gives an ambiguous freeform answer, treat it as "research" (the recommended choice). Do not change the required confirmation strings.
