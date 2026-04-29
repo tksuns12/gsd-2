@@ -136,6 +136,30 @@ describe("#3512: pauseAuto and stopAuto must flush queued follow-up messages", (
     );
   });
 
+  test("pauseAuto rebuilds STATE.md before releasing the session lock", () => {
+    // pauseAuto must persist the DB-backed state projection so resume/debugging
+    // does not see a stale STATE.md after a mid-unit interruption.
+    const start = autoSrc.indexOf("export async function pauseAuto(");
+    const end = autoSrc.indexOf("/**\n * Build a WorktreeResolverDeps", start);
+    const pauseAutoSection = autoSrc.slice(start, end);
+    assert.ok(pauseAutoSection.length > 0, "Could not locate pauseAuto function");
+
+    const rebuildIndex = pauseAutoSection.indexOf("await rebuildState(s.basePath)");
+    const releaseIndex = pauseAutoSection.indexOf("releaseSessionLock(lockBase())");
+    assert.ok(
+      rebuildIndex >= 0,
+      "pauseAuto must rebuild STATE.md from DB-backed state before pause completes",
+    );
+    assert.ok(
+      releaseIndex >= 0,
+      "pauseAuto must still release the session lock",
+    );
+    assert.ok(
+      rebuildIndex < releaseIndex,
+      "pauseAuto must rebuild state before releasing the session lock",
+    );
+  });
+
   test("run-unit.ts still has its existing clearQueue() call (baseline)", () => {
     // Verify the original clearQueue pattern in run-unit.ts hasn't been removed.
     assert.ok(

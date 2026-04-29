@@ -12,6 +12,8 @@ import { randomUUID } from "node:crypto";
 
 import {
   DISPATCH_RULES,
+  getDeepStageGate,
+  hasPendingDeepStage,
   setResearchProjectPromptBuilderForTest,
   type DispatchContext,
 } from "../auto-dispatch.ts";
@@ -492,6 +494,34 @@ test("Deep mode: research-project treats a dimension BLOCKER as terminal", async
   assert.strictEqual(result, null, "dimension blocker files must satisfy project research");
 });
 
+test("Deep mode: research-project stops when every dimension is only a BLOCKER", async (t) => {
+  const base = makeIsolatedBaseWithCleanup(t);
+
+  setupReadyForResearchProject(base);
+  mkdirSync(join(base, ".gsd", "research"), { recursive: true });
+  for (const name of ["STACK", "FEATURES", "ARCHITECTURE", "PITFALLS"]) {
+    writeFileSync(join(base, ".gsd", "research", `${name}-BLOCKER.md`), "# blocked\n");
+  }
+
+  const prefs = { planning_depth: "deep" } as GSDPreferences;
+  const result = await rule(RESEARCH_PROJECT_RULE_NAME).match(makeCtx(base, prefs));
+  assert.equal(result?.action, "stop");
+  assert.match(result?.action === "stop" ? result.reason : "", /only blocker files/);
+});
+
+test("Deep mode: research-project stops on global PROJECT-RESEARCH-BLOCKER", async (t) => {
+  const base = makeIsolatedBaseWithCleanup(t);
+
+  setupReadyForResearchProject(base);
+  mkdirSync(join(base, ".gsd", "research"), { recursive: true });
+  writeFileSync(join(base, ".gsd", "research", "PROJECT-RESEARCH-BLOCKER.md"), "# blocked\n");
+
+  const prefs = { planning_depth: "deep" } as GSDPreferences;
+  const result = await rule(RESEARCH_PROJECT_RULE_NAME).match(makeCtx(base, prefs));
+  assert.equal(result?.action, "stop");
+  assert.match(result?.action === "stop" ? result.reason : "", /PROJECT-RESEARCH-BLOCKER/);
+});
+
 test("Deep mode: research-project DOES dispatch when only 3 of 4 research files exist", async (t) => {
   const base = makeIsolatedBaseWithCleanup(t);
 
@@ -504,6 +534,76 @@ test("Deep mode: research-project DOES dispatch when only 3 of 4 research files 
   const prefs = { planning_depth: "deep" } as GSDPreferences;
   const result = await rule(RESEARCH_PROJECT_RULE_NAME).match(makeCtx(base, prefs));
   assert.ok(result && result.action === "dispatch", "any missing dimension must trigger re-run");
+});
+
+// ─── centralized deep-stage gate ─────────────────────────────────────────
+
+test("Deep mode gate reports the earliest missing section", (t) => {
+  const base = makeIsolatedBaseWithCleanup(t);
+  const prefs = { planning_depth: "deep" } as GSDPreferences;
+
+  mkdirSync(join(base, ".gsd", "research"), { recursive: true });
+  for (const name of ["STACK.md", "FEATURES.md", "ARCHITECTURE.md", "PITFALLS.md"]) {
+    writeFileSync(join(base, ".gsd", "research", name), "# done\n");
+  }
+
+  const gate = getDeepStageGate(prefs, base);
+  assert.deepEqual(
+    { status: gate.status, stage: gate.stage },
+    { status: "pending", stage: "workflow-preferences" },
+    "later artifacts must not let the workflow skip the first pending deep section",
+  );
+  assert.equal(hasPendingDeepStage(prefs, base), true);
+});
+
+test("Deep mode gate blocks blocker-only project research", (t) => {
+  const base = makeIsolatedBaseWithCleanup(t);
+  const prefs = { planning_depth: "deep" } as GSDPreferences;
+
+  writeFileSync(
+    join(base, ".gsd", "PREFERENCES.md"),
+    "---\nplanning_depth: deep\nworkflow_prefs_captured: true\n---\n",
+  );
+  setupReadyForResearchProject(base);
+  mkdirSync(join(base, ".gsd", "research"), { recursive: true });
+  for (const name of ["STACK", "FEATURES", "ARCHITECTURE", "PITFALLS"]) {
+    writeFileSync(join(base, ".gsd", "research", `${name}-BLOCKER.md`), "# blocked\n");
+  }
+
+  const gate = getDeepStageGate(prefs, base);
+  assert.deepEqual(
+    { status: gate.status, stage: gate.stage },
+    { status: "blocked", stage: "project-research" },
+  );
+  assert.equal(hasPendingDeepStage(prefs, base), true);
+});
+
+test("Deep mode gate passes only after verified project research or explicit skip", (t) => {
+  const researchBase = makeIsolatedBaseWithCleanup(t);
+  const prefs = { planning_depth: "deep" } as GSDPreferences;
+
+  writeFileSync(
+    join(researchBase, ".gsd", "PREFERENCES.md"),
+    "---\nplanning_depth: deep\nworkflow_prefs_captured: true\n---\n",
+  );
+  setupReadyForResearchProject(researchBase);
+  mkdirSync(join(researchBase, ".gsd", "research"), { recursive: true });
+  for (const name of ["STACK.md", "FEATURES.md", "ARCHITECTURE.md", "PITFALLS.md"]) {
+    writeFileSync(join(researchBase, ".gsd", "research", name), "# done\n");
+  }
+  assert.equal(getDeepStageGate(prefs, researchBase).status, "complete");
+
+  const skipBase = makeIsolatedBaseWithCleanup(t);
+  writeFileSync(
+    join(skipBase, ".gsd", "PREFERENCES.md"),
+    "---\nplanning_depth: deep\nworkflow_prefs_captured: true\n---\n",
+  );
+  writeValidProject(skipBase);
+  writeValidRequirements(skipBase);
+  mkdirSync(join(skipBase, ".gsd", "runtime"), { recursive: true });
+  writeFileSync(join(skipBase, ".gsd", "runtime", "research-decision.json"), JSON.stringify({ decision: "skip" }));
+
+  assert.equal(getDeepStageGate(prefs, skipBase).status, "complete");
 });
 
 // ─── ordering invariant ───────────────────────────────────────────────────

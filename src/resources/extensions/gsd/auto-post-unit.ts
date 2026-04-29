@@ -17,6 +17,7 @@ import { logWarning, logError } from "./workflow-logger.js";
 import { loadFile, parseSummary, resolveAllOverrides } from "./files.js";
 import { loadPrompt } from "./prompt-loader.js";
 import {
+  gsdRoot,
   resolveSliceFile,
   resolveSlicePath,
   resolveTaskFile,
@@ -305,6 +306,7 @@ export interface PostUnitContext {
 export const USER_DRIVEN_DEEP_UNITS = new Set([
   "discuss-project",
   "discuss-requirements",
+  "discuss-milestone",
   "research-decision",
 ]);
 
@@ -337,6 +339,7 @@ export function isAwaitingUserInput(messages: unknown[] | undefined): boolean {
   const text = lastAssistantText(messages);
   if (!text) return false;
   if (/ask_user_questions was cancelled before receiving a response/i.test(text)) return true;
+  if (/(?:Remote (?:auth failed|questions failed|channel configured but returned no result|questions timed out|questions timed out or failed)|Failed to send questions via)/i.test(text)) return true;
   const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   return lines.some((line) => line.endsWith("?"));
 }
@@ -959,6 +962,15 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
           }
         } catch (e) {
           debugLog("postUnit", { phase: "regenerate-projection", error: String(e) });
+        }
+      }
+
+      if (s.currentUnit.type === "research-project") {
+        try {
+          const inflightMarker = join(gsdRoot(s.basePath), "runtime", "research-project-inflight");
+          if (existsSync(inflightMarker)) unlinkSync(inflightMarker);
+        } catch (e) {
+          debugLog("postUnit", { phase: "research-project-inflight-cleanup", error: String(e) });
         }
       }
 

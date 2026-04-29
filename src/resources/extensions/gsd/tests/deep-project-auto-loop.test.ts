@@ -9,8 +9,10 @@ import { randomUUID } from "node:crypto";
 import { runPreDispatch } from "../auto/phases.ts";
 import { AutoSession } from "../auto/session.ts";
 import { bootstrapAutoSession } from "../auto-start.ts";
-import { postUnitPreVerification } from "../auto-post-unit.ts";
+import { isAwaitingUserInput, postUnitPreVerification } from "../auto-post-unit.ts";
+import { resolveDispatch, setResearchProjectPromptBuilderForTest } from "../auto-dispatch.ts";
 import { resolveExpectedArtifactPath, verifyExpectedArtifact, writeBlockerPlaceholder } from "../auto-recovery.ts";
+import { resetRegistry } from "../rule-registry.ts";
 import {
   clearPendingAutoStart,
   checkDeepProjectSetupAfterTurn,
@@ -55,6 +57,47 @@ function makeNeedsDiscussionState(): GSDState {
     activeMilestone: { id: "M001", title: "Old light-mode milestone" },
     registry: [{ id: "M001", title: "Old light-mode milestone", status: "active" }],
   };
+}
+
+function makeExecutingState(): GSDState {
+  return {
+    ...makeEmptyState(),
+    phase: "executing",
+    activeMilestone: { id: "M001", title: "Core App" },
+    activeSlice: { id: "S01", title: "Storage layer" },
+    activeTask: { id: "T01", title: "Build storage contract" },
+    registry: [{ id: "M001", title: "Core App", status: "active" }],
+  };
+}
+
+function makePlanningState(): GSDState {
+  return {
+    ...makeEmptyState(),
+    phase: "planning",
+    activeMilestone: { id: "M001", title: "Core App" },
+    activeSlice: { id: "S01", title: "Storage layer" },
+    registry: [{ id: "M001", title: "Core App", status: "active" }],
+  };
+}
+
+function writeCapturedDeepPrefs(base: string): void {
+  writeFileSync(
+    join(base, ".gsd", "PREFERENCES.md"),
+    "---\nplanning_depth: deep\nworkflow_prefs_captured: true\n---\n",
+  );
+}
+
+function writeValidProjectAndRequirements(base: string): void {
+  const validProject = readFileSync(
+    new URL("../schemas/__fixtures__/valid-project.md", import.meta.url),
+    "utf-8",
+  );
+  const validRequirements = readFileSync(
+    new URL("../schemas/__fixtures__/valid-requirements.md", import.meta.url),
+    "utf-8",
+  );
+  writeFileSync(join(base, ".gsd", "PROJECT.md"), validProject);
+  writeFileSync(join(base, ".gsd", "REQUIREMENTS.md"), validRequirements);
 }
 
 function makeRepo(): string {
@@ -281,6 +324,131 @@ test("deep project setup: pre-dispatch takes precedence over an existing draft m
     if (result.action === "next") {
       assert.equal(result.data.mid, "PROJECT");
       assert.equal(s.currentMilestoneId, null);
+    }
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("deep project setup: pre-dispatch does not rewrite execution state to PROJECT", async () => {
+  const base = makeBase();
+  try {
+    writeCapturedDeepPrefs(base);
+    writeValidProjectAndRequirements(base);
+    mkdirSync(join(base, ".gsd", "runtime"), { recursive: true });
+    writeFileSync(join(base, ".gsd", "runtime", "research-decision.json"), JSON.stringify({ decision: "skip" }));
+
+    const s = new AutoSession();
+    s.basePath = base;
+    s.originalBasePath = base;
+    s.resourceVersionOnStart = "test";
+
+    let activeMilestoneId: string | null = null;
+    const deps = {
+      checkResourcesStale: () => null,
+      invalidateAllCaches: () => {},
+      preDispatchHealthGate: async () => ({ proceed: true, fixesApplied: [] }),
+      syncProjectRootToWorktree: () => {},
+      deriveState: async () => makeExecutingState(),
+      syncCmuxSidebar: () => {},
+      stopAuto: async () => {},
+      pauseAuto: async () => {},
+      setActiveMilestoneId: (_base: string, mid: string) => { activeMilestoneId = mid; },
+      reconcileMergeState: () => "clean",
+    } as any;
+
+    let seq = 0;
+    const result = await runPreDispatch(
+      {
+        ctx: makeCtx() as any,
+        pi: {} as any,
+        s,
+        deps,
+        prefs: { planning_depth: "deep" } as GSDPreferences,
+        iteration: 1,
+        flowId: "test-flow",
+        nextSeq: () => ++seq,
+      },
+      { recentUnits: [], stuckRecoveryAttempts: 0, consecutiveFinalizeTimeouts: 0 },
+    );
+
+    assert.equal(result.action, "next");
+    if (result.action === "next") {
+      assert.equal(result.data.mid, "M001");
+      assert.equal(result.data.midTitle, "Core App");
+      assert.equal(s.currentMilestoneId, "M001");
+      assert.equal(activeMilestoneId, "M001");
+    }
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("deep project setup: pending project research cannot dispatch PROJECT/S01", async (t) => {
+  const base = makeBase();
+  const restorePromptBuilder = setResearchProjectPromptBuilderForTest(async () => "research prompt");
+  t.after(restorePromptBuilder);
+
+  try {
+    writeCapturedDeepPrefs(base);
+    writeValidProjectAndRequirements(base);
+    mkdirSync(join(base, ".gsd", "runtime"), { recursive: true });
+    writeFileSync(join(base, ".gsd", "runtime", "research-decision.json"), JSON.stringify({ decision: "research" }));
+
+    const s = new AutoSession();
+    s.basePath = base;
+    s.originalBasePath = base;
+    s.resourceVersionOnStart = "test";
+
+    const deps = {
+      checkResourcesStale: () => null,
+      invalidateAllCaches: () => {},
+      preDispatchHealthGate: async () => ({ proceed: true, fixesApplied: [] }),
+      syncProjectRootToWorktree: () => {},
+      deriveState: async () => makePlanningState(),
+      syncCmuxSidebar: () => {},
+      stopAuto: async () => {},
+      pauseAuto: async () => {},
+      setActiveMilestoneId: () => { throw new Error("must not activate milestone while project research is pending"); },
+    } as any;
+
+    let seq = 0;
+    const result = await runPreDispatch(
+      {
+        ctx: makeCtx() as any,
+        pi: {} as any,
+        s,
+        deps,
+        prefs: { planning_depth: "deep" } as GSDPreferences,
+        iteration: 1,
+        flowId: "test-flow",
+        nextSeq: () => ++seq,
+      },
+      { recentUnits: [], stuckRecoveryAttempts: 0, consecutiveFinalizeTimeouts: 0 },
+    );
+
+    assert.equal(result.action, "next");
+    if (result.action !== "next") return;
+
+    assert.equal(result.data.mid, "PROJECT");
+    assert.equal(result.data.state.phase, "pre-planning");
+    assert.equal(result.data.state.activeSlice, null);
+    assert.equal(result.data.state.activeTask, null);
+
+    resetRegistry();
+    const dispatch = await resolveDispatch({
+      basePath: base,
+      mid: result.data.mid,
+      midTitle: result.data.midTitle,
+      state: result.data.state,
+      prefs: { planning_depth: "deep" } as GSDPreferences,
+      structuredQuestionsAvailable: "false",
+    });
+
+    assert.equal(dispatch.action, "dispatch");
+    if (dispatch.action === "dispatch") {
+      assert.equal(dispatch.unitType, "research-project");
+      assert.equal(dispatch.unitId, "RESEARCH-PROJECT");
     }
   } finally {
     rmSync(base, { recursive: true, force: true });
@@ -534,6 +702,14 @@ test("deep project setup: project-level units verify their real artifacts", () =
     assert.equal(verifyExpectedArtifact("research-project", "PROJECT-RESEARCH", base), false);
     writeFileSync(join(researchDir, "PITFALLS-BLOCKER.md"), "# Blocked\n");
     assert.equal(verifyExpectedArtifact("research-project", "PROJECT-RESEARCH", base), true);
+
+    for (const name of ["STACK.md", "FEATURES.md", "ARCHITECTURE.md"]) {
+      rmSync(join(researchDir, name), { force: true });
+    }
+    for (const name of ["STACK", "FEATURES", "ARCHITECTURE"]) {
+      writeFileSync(join(researchDir, `${name}-BLOCKER.md`), "# Blocked\n");
+    }
+    assert.equal(verifyExpectedArtifact("research-project", "PROJECT-RESEARCH", base), false);
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
@@ -555,7 +731,15 @@ test("deep project setup: research-project blocker placeholder is a file, not th
 
     assert.match(diagnosis ?? "", /research/i);
     assert.equal(existsSync(join(base, ".gsd", "research", "PROJECT-RESEARCH-BLOCKER.md")), true);
-    assert.equal(verifyExpectedArtifact("research-project", "PROJECT-RESEARCH", base), true);
+    assert.match(
+      readFileSync(join(base, ".gsd", "research", "PROJECT-RESEARCH-BLOCKER.md"), "utf-8"),
+      /fail-closed/,
+    );
+    assert.equal(
+      verifyExpectedArtifact("research-project", "PROJECT-RESEARCH", base),
+      false,
+      "project research blocker placeholders must not satisfy the research gate",
+    );
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
@@ -651,6 +835,64 @@ test("deep project setup: project question pauses instead of artifact-retrying",
     assert.ok(
       notifications.some((message) => message.includes("waiting for your input")),
       "should notify that the project unit is waiting for user input",
+    );
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("deep project setup: remote question failure is treated as waiting for user input", () => {
+  assert.equal(
+    isAwaitingUserInput([
+      {
+        role: "toolResult",
+        content: "Remote questions failed (discord): Discord API HTTP 401",
+      },
+    ]),
+    true,
+  );
+});
+
+test("deep project setup: discuss-milestone question failure pauses instead of artifact-retrying", async () => {
+  const base = makeBase();
+  try {
+    const s = new AutoSession();
+    s.active = true;
+    s.basePath = base;
+    s.currentUnit = { type: "discuss-milestone", id: "PROJECT", startedAt: Date.now() };
+
+    let pauseCalled = false;
+    const notifications: string[] = [];
+    const result = await postUnitPreVerification(
+      {
+        s,
+        ctx: { ui: { notify: (message: string) => notifications.push(message) } } as any,
+        pi: {} as any,
+        buildSnapshotOpts: () => ({}) as any,
+        lockBase: () => base,
+        stopAuto: async () => {},
+        pauseAuto: async () => { pauseCalled = true; },
+        updateProgressWidget: () => {},
+      },
+      {
+        skipSettleDelay: true,
+        skipWorktreeSync: true,
+        agentEndMessages: [
+          {
+            role: "toolResult",
+            content: "Remote questions failed (discord): Discord API HTTP 401",
+          },
+        ],
+      },
+    );
+
+    assert.equal(result, "dispatched");
+    assert.equal(pauseCalled, true);
+    assert.equal(s.pendingVerificationRetry, null);
+    assert.equal(s.verificationRetryCount.size, 0);
+    assert.ok(
+      notifications.some((message) => message.includes("waiting for your input")),
+      "should notify that the discuss unit is waiting for user input",
     );
   } finally {
     rmSync(base, { recursive: true, force: true });

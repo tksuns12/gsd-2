@@ -92,10 +92,16 @@ function hasValidResearchDecision(base: string): boolean {
 function hasCompleteProjectResearch(base: string): boolean {
   const researchDir = join(gsdRoot(base), "research");
   if (!existsSync(researchDir)) return false;
-  if (existsSync(join(researchDir, PROJECT_RESEARCH_BLOCKER))) return true;
-  return PROJECT_RESEARCH_DIMENSIONS.every((name) =>
-    existsSync(join(researchDir, `${name}.md`)) ||
-    existsSync(join(researchDir, `${name}-BLOCKER.md`)),
+  if (existsSync(join(researchDir, PROJECT_RESEARCH_BLOCKER))) return false;
+  let completedDimensions = 0;
+  let blockerDimensions = 0;
+  for (const name of PROJECT_RESEARCH_DIMENSIONS) {
+    if (existsSync(join(researchDir, `${name}.md`))) completedDimensions += 1;
+    else if (existsSync(join(researchDir, `${name}-BLOCKER.md`))) blockerDimensions += 1;
+  }
+  return (
+    completedDimensions + blockerDimensions === PROJECT_RESEARCH_DIMENSIONS.length &&
+    completedDimensions > 0
   );
 }
 
@@ -723,6 +729,9 @@ export function writeBlockerPlaceholder(
   if (!absPath) return null;
   const dir = dirname(absPath);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  const recoveryLine = unitType === "research-project"
+    ? "This placeholder was written by auto-mode so the project research gate can stop fail-closed."
+    : "This placeholder was written by auto-mode so the pipeline can advance.";
   const content = [
     `# BLOCKER — auto-mode recovery failed`,
     ``,
@@ -730,7 +739,7 @@ export function writeBlockerPlaceholder(
     ``,
     `**Reason**: ${reason}`,
     ``,
-    `This placeholder was written by auto-mode so the pipeline can advance.`,
+    recoveryLine,
     `Review and replace this file before relying on downstream artifacts.`,
   ].join("\n");
   writeFileSync(absPath, content, "utf-8");

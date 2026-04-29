@@ -654,12 +654,28 @@ export async function runPreDispatch(
     }
   }
 
-  const { hasPendingDeepStage } = await import("../auto-dispatch.js");
-  if (hasPendingDeepStage(prefs, s.basePath)) {
+  const { getDeepStageGate } = await import("../auto-dispatch.js");
+  const deepStageGate = getDeepStageGate(prefs, s.basePath);
+  if (
+    (deepStageGate.status === "pending" || deepStageGate.status === "blocked")
+  ) {
+    debugLog("autoLoop", {
+      phase: "deep-project-stage-gate",
+      stage: deepStageGate.stage,
+      status: deepStageGate.status,
+      reason: deepStageGate.reason,
+    });
     return {
       action: "next",
       data: {
-        state,
+        state: {
+          ...state,
+          phase: "pre-planning",
+          activeMilestone: null,
+          activeSlice: null,
+          activeTask: null,
+          nextAction: deepStageGate.reason,
+        },
         mid: "PROJECT",
         midTitle: "Project setup",
       },

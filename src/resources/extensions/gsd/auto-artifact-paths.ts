@@ -135,7 +135,7 @@ export function diagnoseExpectedArtifact(
     case "research-decision":
       return ".gsd/runtime/research-decision.json with decision research|skip";
     case "research-project":
-      return ".gsd/research/{STACK,FEATURES,ARCHITECTURE,PITFALLS}.md or *-BLOCKER.md";
+      return ".gsd/research/{STACK,FEATURES,ARCHITECTURE,PITFALLS}.md with at least one real research file; blocker-only outputs stop";
     case "discuss-milestone":
       return `${relMilestoneFile(base, mid, "CONTEXT")} (milestone context from discussion)`;
     case "discuss-slice":
