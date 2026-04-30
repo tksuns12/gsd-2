@@ -33,6 +33,13 @@ interface BrowseEntry {
   path: string
 }
 
+interface BrowseResult {
+  current: string
+  parent: string | null
+  entries: BrowseEntry[]
+  shortcuts?: BrowseEntry[]
+}
+
 function InlineFolderBrowser({
   onSelect,
   onCancel,
@@ -43,6 +50,7 @@ function InlineFolderBrowser({
   const [currentPath, setCurrentPath] = useState("")
   const [parentPath, setParentPath] = useState<string | null>(null)
   const [entries, setEntries] = useState<BrowseEntry[]>([])
+  const [shortcuts, setShortcuts] = useState<BrowseEntry[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -56,10 +64,11 @@ function InlineFolderBrowser({
         const body = await res.json().catch(() => ({}))
         throw new Error((body as { error?: string }).error ?? `${res.status}`)
       }
-      const data = (await res.json()) as { current: string; parent: string | null; entries: BrowseEntry[] }
+      const data = (await res.json()) as BrowseResult
       setCurrentPath(data.current)
       setParentPath(data.parent)
       setEntries(data.entries)
+      setShortcuts(data.shortcuts ?? [])
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to browse")
     } finally {
@@ -103,6 +112,27 @@ function InlineFolderBrowser({
 
           {!loading && !error && (
             <>
+              {shortcuts.length > 0 && (
+                <div className="mb-1 border-b border-border/40 pb-1">
+                  <div className="px-3 py-1 text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
+                    Locations
+                  </div>
+                  {shortcuts.map((entry) => (
+                    <button
+                      key={`shortcut-${entry.path}`}
+                      type="button"
+                      onClick={() => void browse(entry.path)}
+                      className="group flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-accent/50"
+                    >
+                      <FolderRoot className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                      <span className="min-w-0 flex-1 truncate text-foreground">{entry.name}</span>
+                      <span className="max-w-[130px] truncate font-mono text-[11px] text-muted-foreground">{entry.path}</span>
+                      <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground/50 opacity-0 transition-opacity group-hover:opacity-100" />
+                    </button>
+                  ))}
+                </div>
+              )}
+
               {parentPath && (
                 <button
                   type="button"
@@ -127,7 +157,7 @@ function InlineFolderBrowser({
                 </button>
               ))}
 
-              {entries.length === 0 && !parentPath && (
+              {entries.length === 0 && !parentPath && shortcuts.length === 0 && (
                 <div className="px-3 py-8 text-center text-xs text-muted-foreground">
                   No subdirectories
                 </div>

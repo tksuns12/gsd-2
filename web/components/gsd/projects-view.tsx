@@ -19,17 +19,9 @@ import {
   Folder,
   CornerLeftUp,
   Search,
-  Clock,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useProjectStoreManager } from "@/lib/project-store-manager"
-import {
-  useGSDWorkspaceState,
-  getLiveWorkspaceIndex,
-  getLiveAutoDashboard,
-  formatCost,
-  getCurrentSlice,
-} from "@/lib/gsd-workspace-store"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -348,7 +340,6 @@ export function ProjectsPanel({
 
   const [newProjectOpen, setNewProjectOpen] = useState(false)
   const [changeRootOpen, setChangeRootOpen] = useState(false)
-  const workspaceState = useGSDWorkspaceState()
 
   const handleProjectCreated = useCallback(
     (newProject: ProjectMetadata) => {
@@ -519,28 +510,6 @@ export function ProjectsPanel({
   )
 }
 
-// ─── Active project inline summary (compact for panel card) ────────────
-
-function ActiveProjectSummary({ workspaceState }: { workspaceState: ReturnType<typeof useGSDWorkspaceState> }) {
-  const workspace = getLiveWorkspaceIndex(workspaceState)
-  const dashboard = getLiveAutoDashboard(workspaceState)
-  const currentSlice = getCurrentSlice(workspace)
-
-  if (!workspace) return null
-
-  const activeMilestone = workspace.milestones.find((m) => m.id === workspace.active.milestoneId)
-  const cost = dashboard?.totalCost ?? 0
-
-  const parts: string[] = []
-  if (activeMilestone) parts.push(activeMilestone.id)
-  if (currentSlice) parts.push(currentSlice.id)
-  if (cost > 0) parts.push(formatCost(cost))
-
-  if (parts.length === 0) return null
-
-  return <div className="mt-1.5 text-[11px] text-muted-foreground">{parts.join(" · ")}</div>
-}
-
 // ─── New Project Dialog ────────────────────────────────────────────────
 
 function NewProjectDialog({
@@ -671,6 +640,7 @@ interface BrowseResult {
   current: string
   parent: string | null
   entries: BrowseEntry[]
+  shortcuts?: BrowseEntry[]
 }
 
 function FolderPickerDialog({
@@ -687,6 +657,7 @@ function FolderPickerDialog({
   const [currentPath, setCurrentPath] = useState<string>("")
   const [parentPath, setParentPath] = useState<string | null>(null)
   const [entries, setEntries] = useState<BrowseEntry[]>([])
+  const [shortcuts, setShortcuts] = useState<BrowseEntry[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -704,6 +675,7 @@ function FolderPickerDialog({
       setCurrentPath(data.current)
       setParentPath(data.parent)
       setEntries(data.entries)
+      setShortcuts(data.shortcuts ?? [])
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to browse")
     } finally {
@@ -745,6 +717,26 @@ function FolderPickerDialog({
 
             {!loading && !error && (
               <>
+                {shortcuts.length > 0 && (
+                  <div className="mb-1 border-b border-border/40 pb-1">
+                    <div className="px-3 py-1 text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
+                      Locations
+                    </div>
+                    {shortcuts.map((entry) => (
+                      <button
+                        key={`shortcut-${entry.path}`}
+                        onClick={() => void browse(entry.path)}
+                        className="group flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-left text-sm transition-colors hover:bg-accent/50"
+                      >
+                        <FolderRoot className="h-4 w-4 text-muted-foreground shrink-0" />
+                        <span className="min-w-0 flex-1 truncate text-foreground">{entry.name}</span>
+                        <span className="max-w-[180px] truncate font-mono text-[11px] text-muted-foreground">{entry.path}</span>
+                        <ChevronRight className="h-3.5 w-3.5 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                      </button>
+                    ))}
+                  </div>
+                )}
+
                 {parentPath && (
                   <button
                     onClick={() => void browse(parentPath)}
@@ -767,7 +759,7 @@ function FolderPickerDialog({
                   </button>
                 ))}
 
-                {!parentPath && entries.length === 0 && (
+                {!parentPath && entries.length === 0 && shortcuts.length === 0 && (
                   <div className="px-3 py-8 text-center text-xs text-muted-foreground">No subdirectories</div>
                 )}
               </>
@@ -1272,7 +1264,7 @@ export function ProjectSelectionGate() {
                   {/* Empty filter state */}
                   {filteredProjects.length === 0 && filter.trim() && (
                     <div className="px-4 py-8 text-center text-xs text-muted-foreground">
-                      No projects matching "{filter}"
+                      No projects matching &quot;{filter}&quot;
                     </div>
                   )}
                 </div>
