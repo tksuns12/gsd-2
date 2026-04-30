@@ -27,7 +27,7 @@ type ResourceBootstrapLike = {
   initResources: (agentDir: string) => void
 }
 
-type SpawnedChildLike = Pick<ChildProcess, 'once' | 'unref' | 'pid'>
+type SpawnedChildLike = Pick<ChildProcess, 'once' | 'unref' | 'pid' | 'stdout' | 'stderr'>
 
 export interface WebModeLaunchOptions {
   cwd: string
@@ -520,11 +520,37 @@ async function waitForBootReady(url: string, timeoutMs = 180_000, stderr?: Writa
   throw new Error(lastError ?? 'timed out waiting for boot readiness')
 }
 
-function waitForChildExit(child: SpawnedChildLike): Promise<never> {
+const MAX_STARTUP_OUTPUT_CHARS = 4_000
+
+function captureStartupOutput(child: SpawnedChildLike): () => string {
+  let output = ''
+  const append = (chunk: Buffer | string) => {
+    output += chunk.toString()
+    if (output.length > MAX_STARTUP_OUTPUT_CHARS) {
+      output = output.slice(output.length - MAX_STARTUP_OUTPUT_CHARS)
+    }
+  }
+  child.stdout?.on('data', append)
+  child.stderr?.on('data', append)
+  return () => output.trim()
+}
+
+function unrefStartupOutput(child: SpawnedChildLike): void {
+  const unrefIfAvailable = (stream: NodeJS.ReadableStream | null | undefined) => {
+    const maybeUnref = stream as NodeJS.ReadableStream & { unref?: () => void }
+    maybeUnref?.unref?.()
+  }
+  unrefIfAvailable(child.stdout)
+  unrefIfAvailable(child.stderr)
+}
+
+function waitForChildExit(child: SpawnedChildLike, getStartupOutput: () => string): Promise<never> {
   return new Promise((_, reject) => {
     child.once?.('exit', (code: number | null, signal: NodeJS.Signals | null) => {
       const detail = signal ? `signal ${signal}` : `code ${code ?? 'unknown'}`
-      reject(new Error(`web host process exited before readiness (${detail})`))
+      const startupOutput = getStartupOutput()
+      const outputDetail = startupOutput ? `; output: ${startupOutput}` : ''
+      reject(new Error(`web host process exited before readiness (${detail})${outputDetail}`))
     })
   })
 }
@@ -647,7 +673,7 @@ export async function launchWebMode(
     {
       cwd: spawnSpec.cwd,
       detached: true,
-      stdio: 'ignore',
+      stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
       shell: needsWindowsShell(spawnSpec.command, deps.platform ?? process.platform),
       env,
@@ -672,9 +698,12 @@ export async function launchWebMode(
     return failure
   }
 
+  const getStartupOutput = captureStartupOutput(spawnResult.child)
+
   try {
     const bootReadyFn = deps.waitForBootReady ?? ((u: string) => waitForBootReady(u, 180_000, stderr, authToken))
-    await Promise.race([bootReadyFn(url), waitForChildExit(spawnResult.child)])
+    await Promise.race([bootReadyFn(url), waitForChildExit(spawnResult.child, getStartupOutput)])
+    unrefStartupOutput(spawnResult.child)
   } catch (error) {
     const failure: WebModeLaunchFailure = {
       mode: 'web',

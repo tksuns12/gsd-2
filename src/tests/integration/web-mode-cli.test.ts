@@ -163,7 +163,7 @@ test('launchWebMode prefers the packaged standalone host and opens the resolved 
     options: {
       cwd: standaloneRoot,
       detached: true,
-      stdio: 'ignore',
+      stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
       shell: false,
       env: {
@@ -207,16 +207,29 @@ test('launchWebMode fails fast when the web host exits before readiness', async 
       initResources: () => undefined,
       resolvePort: async () => 45124,
       execPath: '/custom/node',
-      spawn: () => ({
-        pid: 99998,
-        once(event, listener) {
-          if (event === 'exit') {
-            setImmediate(() => listener(1, null))
-          }
-          return this
-        },
-        unref: () => undefined,
-      }),
+      spawn: () => {
+        let stderrDataListener: ((chunk: Buffer) => void) | undefined
+        return {
+          pid: 99998,
+          once(event: string, listener: (...args: unknown[]) => void) {
+            if (event === 'exit') {
+              setImmediate(() => {
+                stderrDataListener?.(Buffer.from('missing standalone dependency\n'))
+                listener(1, null)
+              })
+            }
+            return this
+          },
+          unref: () => undefined,
+          stdout: null,
+          stderr: {
+            on(event: string, listener: (chunk: Buffer) => void) {
+              if (event === 'data') stderrDataListener = listener
+              return this
+            },
+          },
+        }
+      },
       waitForBootReady: async () => {
         await new Promise((resolve) => setTimeout(resolve, 5_000))
       },
@@ -227,7 +240,7 @@ test('launchWebMode fails fast when the web host exits before readiness', async 
 
   assert.equal(status.ok, false)
   if (status.ok) throw new Error('expected failed web launch status')
-  assert.match(status.failureReason, /boot-ready:web host process exited before readiness \(code 1\)/)
+  assert.match(status.failureReason, /boot-ready:web host process exited before readiness \(code 1\); output: missing standalone dependency/)
 })
 
 test('stopWebMode kills process by PID and removes PID file', (t) => {
