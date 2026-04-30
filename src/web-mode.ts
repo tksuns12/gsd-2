@@ -520,6 +520,15 @@ async function waitForBootReady(url: string, timeoutMs = 180_000, stderr?: Writa
   throw new Error(lastError ?? 'timed out waiting for boot readiness')
 }
 
+function waitForChildExit(child: SpawnedChildLike): Promise<never> {
+  return new Promise((_, reject) => {
+    child.once?.('exit', (code: number | null, signal: NodeJS.Signals | null) => {
+      const detail = signal ? `signal ${signal}` : `code ${code ?? 'unknown'}`
+      reject(new Error(`web host process exited before readiness (${detail})`))
+    })
+  })
+}
+
 /**
  * If a previous web server instance is registered for the same `cwd`, attempt
  * to kill it and remove its registry entry so the new launch can bind the port
@@ -665,7 +674,7 @@ export async function launchWebMode(
 
   try {
     const bootReadyFn = deps.waitForBootReady ?? ((u: string) => waitForBootReady(u, 180_000, stderr, authToken))
-    await bootReadyFn(url)
+    await Promise.race([bootReadyFn(url), waitForChildExit(spawnResult.child)])
   } catch (error) {
     const failure: WebModeLaunchFailure = {
       mode: 'web',

@@ -187,6 +187,49 @@ test('launchWebMode prefers the packaged standalone host and opens the resolved 
   assert.equal(webMode.readPidFile(pidFilePath), 99999)
 })
 
+test('launchWebMode fails fast when the web host exits before readiness', async (t) => {
+  const tmp = mkdtempSync(join(tmpdir(), 'gsd-web-early-exit-'))
+  const standaloneRoot = join(tmp, 'dist', 'web', 'standalone')
+  const serverPath = join(standaloneRoot, 'server.js')
+  mkdirSync(standaloneRoot, { recursive: true })
+  writeFileSync(serverPath, 'process.exit(1)\n')
+
+  t.after(() => { rmSync(tmp, { recursive: true, force: true }) })
+
+  const status = await webMode.launchWebMode(
+    {
+      cwd: '/tmp/current-project',
+      projectSessionsDir: '/tmp/.gsd/sessions/--tmp-current-project--',
+      agentDir: '/tmp/.gsd/agent',
+      packageRoot: tmp,
+    },
+    {
+      initResources: () => undefined,
+      resolvePort: async () => 45124,
+      execPath: '/custom/node',
+      spawn: () => ({
+        pid: 99998,
+        once(event, listener) {
+          if (event === 'exit') {
+            setImmediate(() => listener(1, null))
+          }
+          return this
+        },
+        unref: () => undefined,
+      }),
+      waitForBootReady: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 5_000))
+      },
+      openBrowser: () => undefined,
+      stderr: { write: () => true },
+    },
+  )
+
+  assert.equal(status.ok, false)
+  if (status.ok) throw new Error('expected failed web launch status')
+  assert.match(status.failureReason, /boot-ready:web host process exited before readiness \(code 1\)/)
+})
+
 test('stopWebMode kills process by PID and removes PID file', (t) => {
   const tmp = mkdtempSync(join(tmpdir(), 'gsd-web-stop-'))
   const pidFilePath = join(tmp, 'web-server.pid')
