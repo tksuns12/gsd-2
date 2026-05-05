@@ -1,7 +1,10 @@
+// GSD-2 + src/resources/extensions/gsd/bootstrap/agent-end-recovery.ts - Handles provider and agent-end recovery for GSD auto-mode.
+
 import type { ExtensionAPI, ExtensionContext } from "@gsd/pi-coding-agent";
 
 import { logWarning } from "../workflow-logger.js";
 import {
+  checkDeepProjectSetupAfterTurn,
   checkAutoStartAfterDiscuss,
   maybeHandleReadyPhraseWithoutFiles,
   maybeHandleEmptyIntentTurn,
@@ -11,8 +14,9 @@ import { clearPathCache } from "../paths.js";
 import { getAutoDashboardData, getAutoModeStartModel, isAutoActive, pauseAuto, setCurrentDispatchedModelId } from "../auto.js";
 import { getNextFallbackModel, resolveModelWithFallbacksForUnit } from "../preferences.js";
 import { pauseAutoForProviderError } from "../provider-error-pause.js";
-import { isSessionSwitchInFlight, resolveAgentEnd } from "../auto-loop.js";
+import { isSessionSwitchInFlight, resolveAgentEnd, resolveAgentEndCancelled } from "../auto/resolve.js";
 import { resolveModelId } from "../auto-model-selection.js";
+import { resolveProjectRoot } from "../worktree.js";
 import { clearDiscussionFlowState } from "./write-gate.js";
 import { resumeAutoAfterProviderDelay } from "./provider-error-resume.js";
 import {
@@ -44,6 +48,32 @@ export const MAX_TRANSIENT_AUTO_RESUMES = 8;
  */
 export function resetTransientRetryState(): void {
   resetRetryState(retryState);
+}
+
+function resolveAgentEndBasePath(): string | undefined {
+  try {
+    return resolveProjectRoot(process.cwd());
+  } catch {
+    return undefined;
+  }
+}
+
+export function _buildAbortedPauseContext(lastMsg: { errorMessage?: unknown }): {
+  message: string;
+  category: "aborted";
+  isTransient: true;
+} {
+  const hasErrorMessage = Object.prototype.hasOwnProperty.call(lastMsg, "errorMessage") && !!lastMsg.errorMessage;
+  return {
+    message: hasErrorMessage ? String(lastMsg.errorMessage) : "Operation aborted",
+    category: "aborted",
+    isTransient: true,
+  };
+}
+
+export function isUserInitiatedAbortMessage(message: string | undefined | null): boolean {
+  if (!message) return false;
+  return /\b(?:claude code process aborted by user|request aborted by user|process aborted by user)\b/i.test(message);
 }
 
 async function pauseTransientWithBackoff(
@@ -95,8 +125,17 @@ export async function handleAgentEnd(
   // rejected" loop even though the files are on disk.
   clearPathCache();
 
+  try {
+    if (await checkDeepProjectSetupAfterTurn(event, ctx, resolveAgentEndBasePath())) {
+      return;
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logWarning("bootstrap", `checkDeepProjectSetupAfterTurn failed: ${message}`);
+  }
+
   if (checkAutoStartAfterDiscuss()) {
-    clearDiscussionFlowState();
+    clearDiscussionFlowState(resolveAgentEndBasePath() ?? process.cwd());
     return;
   }
 
@@ -140,7 +179,7 @@ export async function handleAgentEnd(
       return;
     }
 
-    await pauseAuto(ctx, pi);
+    await pauseAuto(ctx, pi, _buildAbortedPauseContext(lastMsg as { errorMessage?: unknown }));
     return;
   }
   if (lastMsg && "stopReason" in lastMsg && lastMsg.stopReason === "error") {
@@ -148,6 +187,14 @@ export async function handleAgentEnd(
     // is in the assistant message text content. Fall back to content when
     // errorMessage looks uninformative.
     const rawErrorMsg = ("errorMessage" in lastMsg && lastMsg.errorMessage) ? String(lastMsg.errorMessage) : "";
+    if (isUserInitiatedAbortMessage(rawErrorMsg)) {
+      resolveAgentEndCancelled({
+        message: rawErrorMsg,
+        category: "aborted",
+        isTransient: false,
+      });
+      return;
+    }
     const isUseless = !rawErrorMsg || /^(success|ok|true|error|unknown)$/i.test(rawErrorMsg.trim());
     // #3588: When errorMessage is uninformative, extract the real error from
     // the assistant message text content for display purposes only.

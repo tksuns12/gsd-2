@@ -7,17 +7,16 @@ import { join } from "node:path";
 import {
   resolveAgentEnd,
   resolveAgentEndCancelled,
-  runUnit,
-  autoLoop,
-  detectStuck,
   _resetPendingResolve,
   _hasPendingResolveForTest,
   _setActiveSession,
   isSessionSwitchInFlight,
-  type UnitResult,
-  type AgentEndEvent,
-  type LoopDeps,
-} from "../auto-loop.js";
+} from "../auto/resolve.js";
+import { runUnit } from "../auto/run-unit.js";
+import { autoLoop } from "../auto/loop.js";
+import { detectStuck } from "../auto/detect-stuck.js";
+import type { UnitResult, AgentEndEvent } from "../auto/types.js";
+import type { LoopDeps } from "../auto/loop-deps.js";
 import { ModelPolicyDispatchBlockedError } from "../auto-model-selection.js";
 import type { SessionLockStatus } from "../session-lock.js";
 
@@ -556,27 +555,6 @@ test("late-resolving newSession() after timeout receives aborted signal so tool 
   }
 });
 
-// ─── Structural assertions ───────────────────────────────────────────────────
-
-test("auto-loop.ts exports autoLoop, runUnit, resolveAgentEnd", async () => {
-  const mod = await import("../auto-loop.js");
-  assert.equal(
-    typeof mod.autoLoop,
-    "function",
-    "autoLoop should be exported as a function",
-  );
-  assert.equal(
-    typeof mod.runUnit,
-    "function",
-    "runUnit should be exported as a function",
-  );
-  assert.equal(
-    typeof mod.resolveAgentEnd,
-    "function",
-    "resolveAgentEnd should be exported as a function",
-  );
-});
-
 // NOTE: the "while keyword", "one-shot null-before-resolve", and
 // "selectAndApplyModel before updateProgressWidget" source-grep tests
 // previously here were deleted as tautological (readFileSync + substring
@@ -629,7 +607,11 @@ function makeMockDeps(
         blockers: [],
       } as any;
     },
-    loadEffectiveGSDPreferences: () => ({ preferences: {} }),
+    loadEffectiveGSDPreferences: () => ({
+      // These loop-mechanics tests mock executing state without plan-v2 artifacts.
+      // Plan-v2 default-on coverage lives in uok-plan-v2-wiring.test.ts.
+      preferences: { uok: { plan_v2: { enabled: false } } },
+    }),
     preDispatchHealthGate: async () => ({ proceed: true, fixesApplied: [] }),
     syncProjectRootToWorktree: () => {},
     checkResourcesStale: () => null,
@@ -894,6 +876,123 @@ test("autoLoop passes structured session-lock failure details to the handler", a
   assert.ok(
     !deps.callLog.includes("resolveDispatch"),
     "should stop before dispatch after lock validation fails",
+  );
+});
+
+// Regression for #5308: the iteration prelude must dequeue sidecar items
+// (popping the queue and emitting the `sidecar-dequeue` journal event) BEFORE
+// validateSessionLock + break-on-invalid. Inverting that order silently drops
+// queued sidecar work on lock-loss. Covers first-iteration and mid-session.
+test("autoLoop dequeues sidecar item before session-lock break (first iteration, #5308)", async () => {
+  _resetPendingResolve();
+
+  const ctx = makeMockCtx();
+  ctx.ui.setStatus = () => {};
+  const pi = makeMockPi();
+  const s = makeLoopSession();
+  s.sidecarQueue.push({
+    kind: "hook" as const,
+    unitType: "hook/review",
+    unitId: "M001/S01/T01/review",
+    prompt: "review the code",
+  });
+
+  const journalEvents: string[] = [];
+  const deps = makeMockDeps({
+    validateSessionLock: () =>
+      ({
+        valid: false,
+        failureReason: "compromised",
+        expectedPid: process.pid,
+      }) as SessionLockStatus,
+    handleLostSessionLock: () => {
+      deps.callLog.push("handleLostSessionLock");
+    },
+    emitJournalEvent: (entry) => {
+      journalEvents.push(entry.eventType);
+    },
+  });
+
+  await autoLoop(ctx, pi, s, deps);
+
+  assert.equal(
+    s.sidecarQueue.length,
+    0,
+    "sidecar item must be popped on lock-loss iteration (pre-#5308 ordering)",
+  );
+  assert.ok(
+    journalEvents.includes("sidecar-dequeue"),
+    "sidecar-dequeue journal event must be emitted before session-lock break",
+  );
+  assert.ok(
+    deps.callLog.includes("handleLostSessionLock"),
+    "session lock handler must still fire after sidecar dequeue",
+  );
+  assert.ok(!deps.callLog.includes("deriveState"), "lock loss should stop before deriving state");
+});
+
+test("autoLoop dequeues sidecar item before session-lock break (mid-session, #5308)", async () => {
+  _resetPendingResolve();
+
+  const ctx = makeMockCtx();
+  ctx.ui.setStatus = () => {};
+  const pi = makeMockPi();
+  const s = makeLoopSession();
+
+  const journalEvents: string[] = [];
+  let lockCheckCount = 0;
+  const deps = makeMockDeps({
+    // First iteration: lock valid; second iteration: lock invalidates.
+    validateSessionLock: () => {
+      lockCheckCount += 1;
+      if (lockCheckCount === 1) {
+        return { valid: true } as SessionLockStatus;
+      }
+      return {
+        valid: false,
+        failureReason: "compromised",
+        expectedPid: process.pid,
+      } as SessionLockStatus;
+    },
+    handleLostSessionLock: () => {
+      deps.callLog.push("handleLostSessionLock");
+    },
+    emitJournalEvent: (entry) => {
+      journalEvents.push(entry.eventType);
+    },
+    // Enqueue a sidecar item at the end of iteration 1, so iteration 2 begins
+    // with a non-empty queue and an invalid lock.
+    postUnitPostVerification: async () => {
+      deps.callLog.push("postUnitPostVerification");
+      s.sidecarQueue.push({
+        kind: "hook" as const,
+        unitType: "hook/review",
+        unitId: "M001/S01/T01/review",
+        prompt: "review the code",
+      });
+      return "continue" as const;
+    },
+  });
+
+  const loopPromise = autoLoop(ctx, pi, s, deps);
+  // Allow the loop to reach runUnit's await on iteration 1.
+  await new Promise((r) => setTimeout(r, 50));
+  resolveAgentEnd(makeEvent());
+  await loopPromise;
+
+  assert.ok(lockCheckCount >= 2, "lock validator must run on iteration 2");
+  assert.equal(
+    s.sidecarQueue.length,
+    0,
+    "queued sidecar item must be popped on the lock-loss iteration",
+  );
+  assert.ok(
+    journalEvents.includes("sidecar-dequeue"),
+    "sidecar-dequeue journal event must be emitted before session-lock break",
+  );
+  assert.ok(
+    deps.callLog.includes("handleLostSessionLock"),
+    "lock-loss handler must still fire on iteration 2",
   );
 });
 
@@ -2179,6 +2278,87 @@ test("autoLoop rejects execute-task with 0 tool calls as hallucinated (#1833)", 
   );
 });
 
+test("autoLoop pauses user-driven deep question instead of flagging 0 tool calls", async () => {
+  _resetPendingResolve();
+
+  const ctx = makeMockCtx();
+  ctx.ui.setStatus = () => {};
+  ctx.sessionManager = { getSessionFile: () => "/tmp/session.json" };
+  const pi = makeMockPi();
+
+  const notifications: string[] = [];
+  ctx.ui.notify = (msg: string) => { notifications.push(msg); };
+
+  const s = makeLoopSession();
+  const mockLedger = {
+    version: 1,
+    projectStartedAt: Date.now(),
+    units: [] as any[],
+  };
+
+  const deps = makeMockDeps({
+    deriveState: async () => {
+      deps.callLog.push("deriveState");
+      return {
+        phase: "executing",
+        activeMilestone: { id: "M001", title: "Bootstrap", status: "active" },
+        activeSlice: null,
+        activeTask: null,
+        registry: [{ id: "M001", status: "active" }],
+        blockers: [],
+      } as any;
+    },
+    resolveDispatch: async () => {
+      deps.callLog.push("resolveDispatch");
+      return {
+        action: "dispatch" as const,
+        unitType: "discuss-project",
+        unitId: "PROJECT",
+        prompt: "ask what to build",
+      };
+    },
+    closeoutUnit: async () => {
+      mockLedger.units.push({
+        type: "discuss-project",
+        id: "PROJECT",
+        startedAt: s.currentUnit?.startedAt ?? Date.now(),
+        toolCalls: 0,
+        assistantMessages: 1,
+        tokens: { input: 100, output: 20, total: 120, cacheRead: 0, cacheWrite: 0 },
+        cost: 0.01,
+      });
+    },
+    getLedger: () => mockLedger,
+    postUnitPreVerification: async () => {
+      deps.callLog.push("postUnitPreVerification");
+      return "dispatched" as const;
+    },
+  });
+
+  const loopPromise = autoLoop(ctx, pi, s, deps);
+
+  await new Promise((r) => setTimeout(r, 50));
+  resolveAgentEnd(makeEvent([
+    {
+      role: "assistant",
+      content: [
+        { type: "text", text: "What do you want to build?" },
+      ],
+    },
+  ]));
+
+  await loopPromise;
+
+  assert.ok(
+    deps.callLog.includes("postUnitPreVerification"),
+    "questioning units should reach post-unit verification so the pause path can run",
+  );
+  assert.ok(
+    !notifications.some((n) => n.includes("context exhaustion")),
+    "questioning units should not show the context-exhaustion warning",
+  );
+});
+
 test("autoLoop rejects complete-slice with 0 tool calls as context-exhausted (#2653)", async () => {
   _resetPendingResolve();
 
@@ -2408,7 +2588,10 @@ test("autoLoop enforces min_request_interval_ms delay between LLM dispatches (#2
 
     const deps = makeMockDeps({
       loadEffectiveGSDPreferences: () => ({
-        preferences: { min_request_interval_ms: 300 },
+        preferences: {
+          min_request_interval_ms: 300,
+          uok: { plan_v2: { enabled: false } },
+        },
       }),
       deriveState: async () => {
         iterCount++;
@@ -2493,7 +2676,7 @@ test("autoLoop skips rate-limit delay when min_request_interval_ms is 0 (default
 
     const deps = makeMockDeps({
       loadEffectiveGSDPreferences: () => ({
-        preferences: {},
+        preferences: { uok: { plan_v2: { enabled: false } } },
       }),
       deriveState: async () => {
         iterCount++;

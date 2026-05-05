@@ -1,6 +1,5 @@
-// GSD-2 — #4782 phase 2 composer tests. Pure-function tests using mock
-// resolvers plus an integration check that reassess-roadmap's migrated
-// builder produces a prompt matching expectations.
+// Project/App: GSD-2
+// File Purpose: Tests unit context composer rendering, budgets, and reassess-roadmap prompt integration.
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -9,6 +8,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import {
+  composeContextModeInstructions,
   composeInlinedContext,
   composeUnitContext,
   manifestBudgetChars,
@@ -101,6 +101,44 @@ test("#4782 composer: manifestBudgetChars returns declared budget", () => {
   assert.strictEqual(manifestBudgetChars("never-dispatched"), null);
 });
 
+test("Context Mode composer: disabled, unknown, and none modes return empty string", () => {
+  assert.strictEqual(
+    composeContextModeInstructions("execute-task", { enabled: false, renderMode: "standalone" }),
+    "",
+  );
+  assert.strictEqual(
+    composeContextModeInstructions("never-dispatched", { enabled: true, renderMode: "standalone" }),
+    "",
+  );
+  assert.strictEqual(
+    composeContextModeInstructions("workflow-preferences", { enabled: true, renderMode: "standalone" }),
+    "",
+  );
+});
+
+test("Context Mode composer: standalone output starts with heading and includes required tools", () => {
+  const out = composeContextModeInstructions("execute-task", { enabled: true, renderMode: "standalone" });
+  assert.ok(out.startsWith("## Context Mode"));
+  assert.match(out, /execution lane/i);
+  assert.match(out, /`gsd_exec`/);
+  assert.match(out, /noisy commands/);
+  assert.match(out, /`gsd_exec_search`/);
+  assert.match(out, /before reruns/);
+  assert.match(out, /`gsd_resume`/);
+  assert.match(out, /after compaction or resume/);
+});
+
+test("Context Mode composer: nested output is compact single sentence", () => {
+  const out = composeContextModeInstructions("gate-evaluate", { enabled: true, renderMode: "nested" });
+  assert.ok(!out.startsWith("## Context Mode"));
+  assert.match(out, /^Context Mode \(verification lane\): /);
+  assert.strictEqual(out.split(/\n/).length, 1);
+  assert.match(out, /`gsd_exec`/);
+  assert.match(out, /`gsd_exec_search`/);
+  assert.match(out, /`gsd_resume`/);
+  assert.ok(out.length < 180, `nested guidance should stay compact, got ${out.length} chars`);
+});
+
 // ─── Integration: migrated buildReassessRoadmapPrompt ─────────────────────
 
 function makeFixtureBase(): string {
@@ -186,7 +224,7 @@ test("#4782 phase 2: buildReassessRoadmapPrompt emits composer-shaped context wi
 
 const fakeBase: BaseResolverContext = {
   unitType: "reassess-roadmap",
-  basePath: "/tmp/fake",
+  basePath: process.env.GSD_TEST_WORKSPACE_ROOT ?? process.cwd(),
   milestoneId: "M001",
   sliceId: "S01",
 };
