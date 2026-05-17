@@ -18,6 +18,16 @@ import { findMilestoneIds } from "./milestone-ids.js";
 
 const MAX_UAT_ATTEMPTS = 3;
 
+function isCurrentGsdStateIntactForMigratingCleanup(basePath: string): boolean {
+  try {
+    const stateFile = resolveGsdRootFile(basePath, "STATE");
+    const milestonesPath = milestonesDir(basePath);
+    return existsSync(stateFile) && existsSync(milestonesPath);
+  } catch {
+    return false;
+  }
+}
+
 function hasAssessmentVerdict(basePath: string, mid: string, sid: string): boolean {
   const assessmentPath = join(gsdRoot(basePath), "milestones", mid, "slices", sid, `${sid}-ASSESSMENT.md`);
   if (!existsSync(assessmentPath)) return false;
@@ -446,6 +456,13 @@ export async function checkRuntimeHealth(
         if (shouldFix("failed_migration")) {
           if (recoverFailedMigration(basePath)) {
             fixesApplied.push("recovered failed migration (.gsd.migrating → .gsd)");
+          } else if (isCurrentGsdStateIntactForMigratingCleanup(basePath)) {
+            try {
+              rmSync(migratingPath, { recursive: true, force: true });
+              fixesApplied.push("removed stale .gsd.migrating orphan after validating current .gsd state");
+            } catch {
+              // Keep issue visible if cleanup fails
+            }
           }
         }
       }
