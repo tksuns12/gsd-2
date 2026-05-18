@@ -403,7 +403,12 @@ export function registerDbTools(pi: ExtensionAPI): void {
         };
       }
 
-      const existingIds = findMilestoneIds(basePath);
+      await ensureDbOpen(basePath);
+      const { getAllMilestones } = await import("../gsd-db.js");
+      const existingIds = [
+        ...findMilestoneIds(basePath),
+        ...getAllMilestones().map((m) => m.id),
+      ];
       const uniqueEnabled = !!loadEffectiveGSDPreferences(basePath)?.preferences?.unique_milestone_ids;
       const allIds = [...new Set([...existingIds, ...getReservedMilestoneIds()])];
       const newId = nextMilestoneId(allIds, uniqueEnabled);
